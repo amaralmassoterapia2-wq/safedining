@@ -14,10 +14,39 @@ export default function RestaurantOwnerLogin({ onLoginSuccess, onBackToGuest }: 
   const [restaurantName, setRestaurantName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  const handleResendVerification = async () => {
+    if (!email) {
+      setError('Please enter your email address');
+      return;
+    }
+    setError('');
+    setMessage('');
+    setLoading(true);
+
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/`,
+        },
+      });
+
+      if (error) throw error;
+      setMessage('Verification email sent! Check your inbox.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resend verification email');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setMessage('');
     setLoading(true);
 
     try {
@@ -56,6 +85,7 @@ export default function RestaurantOwnerLogin({ onLoginSuccess, onBackToGuest }: 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setMessage('');
     setLoading(true);
 
     try {
@@ -211,6 +241,21 @@ export default function RestaurantOwnerLogin({ onLoginSuccess, onBackToGuest }: 
         {error && (
           <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded-lg mb-6">
             {error}
+            {error.includes('Invalid login credentials') && (
+              <button
+                onClick={handleResendVerification}
+                disabled={loading}
+                className="block mt-2 text-sm text-red-300 hover:text-white underline"
+              >
+                Resend verification email
+              </button>
+            )}
+          </div>
+        )}
+
+        {message && (
+          <div className="bg-emerald-900/50 border border-emerald-700 text-emerald-200 px-4 py-3 rounded-lg mb-6">
+            {message}
           </div>
         )}
 
