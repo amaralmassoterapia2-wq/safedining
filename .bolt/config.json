@@ -1,3 +1,16 @@
 {
-  "template": "bolt-vite-react-ts"
+  "database": {
+    "provider": "supabase",
+    "configured": true,
+    "url": "https://lupmvhppsfvvzoligglz.supabase.co",
+    "tables": [
+      "restaurants",
+      "menu_items",
+      "ingredients",
+      "cooking_steps",
+      "dietary_restrictions",
+      "customer_profiles",
+      "chef_requests"
+    ]
+  }
 }
