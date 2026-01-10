@@ -46,7 +46,7 @@ function AppContent() {
     const { data: restaurant } = await supabase
       .from('restaurants')
       .select('id, terms_accepted, onboarding_completed')
-      .eq('user_id', user.id)
+      .eq('owner_id', user.id)
       .maybeSingle();
 
     if (restaurant) {
@@ -84,9 +84,15 @@ function AppContent() {
     setGuestView('dietary-setup');
   };
 
-  const handleRestaurantLoginSuccess = (id: string) => {
+  const handleRestaurantLoginSuccess = (id: string, isNewSignup: boolean = false) => {
     setRestaurantId(id);
-    loadRestaurantData();
+    if (isNewSignup) {
+      // New signup - go directly to onboarding (we know terms_accepted and onboarding_completed are false)
+      setRestaurantView('onboarding');
+    } else {
+      // Existing user login - load their data to determine where to go
+      loadRestaurantData();
+    }
   };
 
   if (loading) {

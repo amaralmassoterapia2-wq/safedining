@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { ChefHat, Mail, Lock, Building2, ArrowLeft } from 'lucide-react';
 
 interface RestaurantOwnerLoginProps {
-  onLoginSuccess: (restaurantId: string) => void;
+  onLoginSuccess: (restaurantId: string, isNewSignup?: boolean) => void;
   onBackToGuest: () => void;
 }
 
@@ -31,21 +31,17 @@ export default function RestaurantOwnerLogin({ onLoginSuccess, onBackToGuest }: 
       if (authData.user) {
         const qrCode = `REST-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
-        const { data: restaurant, error: restaurantError } = await supabase
-          .from('restaurants')
-          .insert({
-            name: restaurantName,
-            user_id: authData.user.id,
-            qr_code: qrCode,
-            terms_accepted: false,
-            onboarding_completed: false,
-          })
-          .select()
-          .single();
+        // Use RPC function to bypass RLS (works before email confirmation)
+        const { data: restaurantId, error: restaurantError } = await supabase
+          .rpc('create_restaurant_for_user', {
+            p_name: restaurantName,
+            p_owner_id: authData.user.id,
+            p_qr_code: qrCode,
+          });
 
         if (restaurantError) throw restaurantError;
 
-        onLoginSuccess(restaurant.id);
+        onLoginSuccess(restaurantId, true); // true = new signup
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed');
@@ -71,7 +67,7 @@ export default function RestaurantOwnerLogin({ onLoginSuccess, onBackToGuest }: 
         const { data: restaurant, error: restaurantError } = await supabase
           .from('restaurants')
           .select('id, terms_accepted, onboarding_completed')
-          .eq('user_id', authData.user.id)
+          .eq('owner_id', authData.user.id)
           .maybeSingle();
 
         if (restaurantError) throw restaurantError;
