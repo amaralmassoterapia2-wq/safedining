@@ -19,18 +19,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // Handle email confirmation and other auth callbacks from URL
+    const handleAuthCallback = async () => {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const queryParams = new URLSearchParams(window.location.search);
+
+      // Check for tokens in URL (from email confirmation redirect)
+      const accessToken = hashParams.get('access_token') || queryParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token') || queryParams.get('refresh_token');
+
+      if (accessToken && refreshToken) {
+        // Set the session from the tokens
+        const { data, error } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+
+        if (!error && data.session) {
+          setSession(data.session);
+          setUser(data.session.user);
+          // Clean up URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Check for error in URL (e.g., expired link)
+      const error = hashParams.get('error') || queryParams.get('error');
+      const errorDescription = hashParams.get('error_description') || queryParams.get('error_description');
+      if (error) {
+        console.error('Auth error:', error, errorDescription);
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      // Get existing session
+      const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
-    });
+    };
+
+    handleAuthCallback();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      (() => {
-        setSession(session);
-        setUser(session?.user ?? null);
-        setLoading(false);
-      })();
+      setSession(session);
+      setUser(session?.user ?? null);
+      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
