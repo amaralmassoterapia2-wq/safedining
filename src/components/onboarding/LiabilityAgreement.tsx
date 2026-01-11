@@ -29,6 +29,18 @@ export default function LiabilityAgreement({ restaurantId, onAccept }: Liability
 
       if (updateError) throw updateError;
 
+      // Send verification email after terms acceptance
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.email && !user.email_confirmed_at) {
+        await supabase.auth.resend({
+          type: 'signup',
+          email: user.email,
+          options: {
+            emailRedirectTo: `${window.location.origin}/`,
+          },
+        });
+      }
+
       onAccept();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save terms acceptance');

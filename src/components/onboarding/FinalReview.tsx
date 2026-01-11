@@ -1,24 +1,34 @@
 import { useEffect, useState, useRef } from 'react';
-import { supabase, Database } from '../../lib/supabase';
-import { CheckCircle2, Download, QrCode as QrCodeIcon, ExternalLink } from 'lucide-react';
+import { supabase, Database, WeightUnit, formatAmount } from '../../lib/supabase';
+import { CheckCircle2, Download, QrCode as QrCodeIcon, ExternalLink, ArrowLeft, AlertTriangle, Loader2 } from 'lucide-react';
 import QRCode from 'qrcode';
+import { analyzeMenuItemAllergens, MenuItemAllergenAnalysis } from '../../lib/openai';
 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
 type Ingredient = Database['public']['Tables']['ingredients']['Row'];
+type MenuItemIngredient = Database['public']['Tables']['menu_item_ingredients']['Row'];
 type Restaurant = Database['public']['Tables']['restaurants']['Row'];
 
+interface IngredientWithAmount extends Ingredient {
+  amount_value: number | null;
+  amount_unit: WeightUnit | null;
+}
+
 interface MenuItemWithIngredients extends MenuItem {
-  ingredients: Ingredient[];
+  ingredients: IngredientWithAmount[];
+  allergenAnalysis?: MenuItemAllergenAnalysis;
 }
 
 interface FinalReviewProps {
   restaurantId: string;
+  onBack?: () => void;
 }
 
-export default function FinalReview({ restaurantId }: FinalReviewProps) {
+export default function FinalReview({ restaurantId, onBack }: FinalReviewProps) {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItemWithIngredients[]>([]);
   const [loading, setLoading] = useState(true);
+  const [analyzingAllergens, setAnalyzingAllergens] = useState(false);
   const [qrGenerated, setQrGenerated] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState('');
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -39,27 +49,57 @@ export default function FinalReview({ restaurantId }: FinalReviewProps) {
         setRestaurant(restaurantData);
       }
 
+      // Load menu items
       const { data: items } = await supabase
         .from('menu_items')
         .select('*')
         .eq('restaurant_id', restaurantId);
 
       if (items) {
+        // Load ingredients for each item via junction table
         const itemsWithIngredients = await Promise.all(
           items.map(async (item) => {
-            const { data: ingredients } = await supabase
-              .from('ingredients')
-              .select('*')
+            // Get menu_item_ingredients with ingredient details
+            const { data: menuItemIngredients } = await supabase
+              .from('menu_item_ingredients')
+              .select('*, ingredient:ingredients(*)')
               .eq('menu_item_id', item.id);
+
+            const ingredients: IngredientWithAmount[] = (menuItemIngredients || []).map((mii: any) => ({
+              ...mii.ingredient,
+              amount_value: mii.amount_value,
+              amount_unit: mii.amount_unit,
+            }));
 
             return {
               ...item,
-              ingredients: ingredients || [],
+              ingredients,
             };
           })
         );
 
         setMenuItems(itemsWithIngredients);
+
+        // Analyze allergens for each item (including preparation)
+        setAnalyzingAllergens(true);
+        const itemsWithAllergenAnalysis = await Promise.all(
+          itemsWithIngredients.map(async (item) => {
+            const analysis = await analyzeMenuItemAllergens(
+              item.name,
+              item.ingredients.map(ing => ({
+                name: ing.name,
+                allergens: ing.contains_allergens,
+              })),
+              item.preparation || ''
+            );
+            return {
+              ...item,
+              allergenAnalysis: analysis,
+            };
+          })
+        );
+        setMenuItems(itemsWithAllergenAnalysis);
+        setAnalyzingAllergens(false);
       }
     } catch (err) {
       console.error('Error loading data:', err);
@@ -112,22 +152,13 @@ export default function FinalReview({ restaurantId }: FinalReviewProps) {
     link.click();
   };
 
-  const getAllergenSummary = (item: MenuItemWithIngredients) => {
-    const allergens = Array.from(
-      new Set(item.ingredients.flatMap((ing) => ing.contains_allergens))
-    );
-
-    if (allergens.length === 0) {
-      return { safe: ['No common allergens detected'], contains: [] };
-    }
-
-    return { safe: [], contains: allergens };
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-slate-600">Loading menu...</div>
+        <div className="text-slate-600 flex items-center gap-2">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          Loading menu...
+        </div>
       </div>
     );
   }
@@ -138,6 +169,16 @@ export default function FinalReview({ restaurantId }: FinalReviewProps) {
     <div className="min-h-screen p-4 py-8">
       <div className="max-w-5xl mx-auto">
         <div className="bg-white rounded-2xl shadow-2xl p-8">
+          {onBack && !qrGenerated && (
+            <button
+              onClick={onBack}
+              className="text-slate-600 hover:text-slate-900 mb-6 flex items-center gap-2 text-sm font-medium transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Edit Dishes
+            </button>
+          )}
+
           <h1 className="text-3xl font-bold text-slate-900 mb-2">
             Review Your Menu
           </h1>
@@ -145,9 +186,19 @@ export default function FinalReview({ restaurantId }: FinalReviewProps) {
             Verify all dishes and allergen information before publishing
           </p>
 
+          {analyzingAllergens && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 flex items-center gap-3">
+              <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+              <span className="text-blue-800">Analyzing allergens and cross-contamination risks...</span>
+            </div>
+          )}
+
           <div className="space-y-4 mb-8">
             {menuItems.map((item) => {
-              const allergenInfo = getAllergenSummary(item);
+              const analysis = item.allergenAnalysis;
+              const hasDirectAllergens = analysis && analysis.directAllergens.length > 0;
+              const hasCrossContamination = analysis && analysis.crossContaminationRisks.length > 0;
+              const isAllergenFree = analysis && analysis.allAllergens.length === 0;
 
               return (
                 <div
@@ -179,22 +230,74 @@ export default function FinalReview({ restaurantId }: FinalReviewProps) {
                     )}
                   </div>
 
+                  {/* Ingredients List */}
+                  {item.ingredients.length > 0 && (
+                    <div className="mb-3 text-sm text-slate-600">
+                      <span className="font-medium">Ingredients: </span>
+                      {item.ingredients.map((ing, idx) => {
+                        const displayAmount = formatAmount(ing.amount_value, ing.amount_unit);
+                        return (
+                          <span key={ing.id}>
+                            {ing.name}{displayAmount ? ` (${displayAmount})` : ''}
+                            {idx < item.ingredients.length - 1 ? ', ' : ''}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Allergen Information */}
                   <div className="flex flex-wrap gap-2">
-                    {allergenInfo.safe.length > 0 && (
+                    {isAllergenFree && (
                       <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">
                         <CheckCircle2 className="w-3 h-3" />
-                        {allergenInfo.safe[0]}
+                        No common allergens detected
                       </span>
                     )}
-                    {allergenInfo.contains.map((allergen) => (
+
+                    {/* Direct allergens from ingredients */}
+                    {hasDirectAllergens && analysis.directAllergens.map((allergen) => (
                       <span
-                        key={allergen}
+                        key={`direct-${allergen}`}
                         className="inline-flex items-center gap-1 px-3 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-full"
                       >
                         Contains: {allergen}
                       </span>
                     ))}
+
+                    {/* Cross-contamination risks from preparation */}
+                    {hasCrossContamination && analysis.crossContaminationRisks.map((risk, idx) => (
+                      <span
+                        key={`cross-${idx}`}
+                        className="inline-flex items-center gap-1 px-3 py-1 bg-amber-100 text-amber-800 text-xs font-medium rounded-full"
+                        title={risk.reason}
+                      >
+                        <AlertTriangle className="w-3 h-3" />
+                        May contain: {risk.allergen}
+                      </span>
+                    ))}
                   </div>
+
+                  {/* Safety Notes */}
+                  {analysis && analysis.safetyNotes.length > 0 && (
+                    <div className="mt-3 text-xs text-slate-500 italic">
+                      {analysis.safetyNotes.map((note, idx) => (
+                        <p key={idx}>{note}</p>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Cross-contamination details (expandable) */}
+                  {hasCrossContamination && (
+                    <div className="mt-3 p-3 bg-amber-50 rounded-lg">
+                      <p className="text-xs font-semibold text-amber-900 mb-1">Cross-contamination details:</p>
+                      <ul className="text-xs text-amber-800 space-y-1">
+                        {analysis.crossContaminationRisks.map((risk, idx) => (
+                          <li key={idx}>• <strong>{risk.allergen}:</strong> {risk.reason}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -210,7 +313,8 @@ export default function FinalReview({ restaurantId }: FinalReviewProps) {
               </p>
               <button
                 onClick={handleGenerateQR}
-                className="w-full bg-slate-900 text-white py-4 rounded-xl font-semibold hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
+                disabled={analyzingAllergens}
+                className="w-full bg-slate-900 text-white py-4 rounded-xl font-semibold hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3 disabled:opacity-50"
               >
                 <QrCodeIcon className="w-6 h-6" />
                 Generate My QR Code & Publish Menu

@@ -1,7 +1,25 @@
-import { useState } from 'react';
-import { supabase } from '../../lib/supabase';
+import { useState, useEffect, useRef } from 'react';
+import { supabase, Database, WeightUnit, WEIGHT_UNITS } from '../../lib/supabase';
 import { ScannedDish } from '../../pages/RestaurantOnboarding';
-import { Check, Upload, X, ChevronRight } from 'lucide-react';
+import { Check, Upload, X, ChevronRight, Plus, Sparkles, Loader2, AlertTriangle, Edit3, Clock } from 'lucide-react';
+import { suggestIngredientsForDish, detectAllergens, SuggestedIngredient, COMMON_ALLERGENS } from '../../lib/openai';
+
+// Helper to format relative time
+function formatTimeAgo(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return `${Math.floor(diffHours / 24)}d ago`;
+}
+
+type Ingredient = Database['public']['Tables']['ingredients']['Row'];
+type MenuItem = Database['public']['Tables']['menu_items']['Row'];
 
 interface DishDetailsInputProps {
   restaurantId: string;
@@ -9,8 +27,25 @@ interface DishDetailsInputProps {
   onComplete: () => void;
 }
 
+interface ExistingDishData {
+  menuItemId: string;
+  preparation: string;
+  photoUrl: string | null;
+  ingredients: SelectedIngredient[];
+  updatedAt: string;
+}
+
+interface SelectedIngredient {
+  ingredientId?: string; // If using existing ingredient
+  name: string;
+  amountValue: number | null;
+  amountUnit: WeightUnit | null;
+  allergens: string[];
+  isNew: boolean; // True if this is a new ingredient to be created
+}
+
 interface DishForm {
-  ingredients: string;
+  ingredients: SelectedIngredient[];
   preparation: string;
   photoFile: File | null;
   photoUrl: string;
@@ -22,8 +57,176 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
   const [saving, setSaving] = useState(false);
   const [completedDishes, setCompletedDishes] = useState<Set<string>>(new Set());
 
+  // Ingredient-related state
+  const [existingIngredients, setExistingIngredients] = useState<Ingredient[]>([]);
+  const [loadingIngredients, setLoadingIngredients] = useState(true);
+  const [suggestedIngredients, setSuggestedIngredients] = useState<SuggestedIngredient[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [newIngredientName, setNewIngredientName] = useState('');
+  const [newIngredientAmountValue, setNewIngredientAmountValue] = useState<string>('');
+  const [newIngredientAmountUnit, setNewIngredientAmountUnit] = useState<WeightUnit>('g');
+  const [detectingAllergens, setDetectingAllergens] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [editingAllergenIndex, setEditingAllergenIndex] = useState<number | null>(null);
+  const allergenEditorRef = useRef<HTMLDivElement>(null);
+  const [existingDishData, setExistingDishData] = useState<Record<string, ExistingDishData>>({});
+  const [loadingExistingDishes, setLoadingExistingDishes] = useState(true);
+  const [customAllergenInput, setCustomAllergenInput] = useState('');
+
   const currentDish = currentDishIndex !== null ? dishes[currentDishIndex] : null;
-  const currentForm = currentDish ? dishForms[currentDish.id] || { ingredients: '', preparation: '', photoFile: null, photoUrl: '' } : null;
+  const currentForm = currentDish
+    ? dishForms[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '' }
+    : null;
+
+  // Load existing ingredients and recently completed dishes on mount
+  useEffect(() => {
+    loadExistingIngredients();
+    loadRecentlyCompletedDishes();
+  }, [restaurantId]);
+
+  // Load AI suggestions when selecting a dish
+  useEffect(() => {
+    if (currentDish && existingIngredients.length >= 0) {
+      loadSuggestions();
+    }
+  }, [currentDishIndex, existingIngredients]);
+
+  // Close allergen editor when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (allergenEditorRef.current && !allergenEditorRef.current.contains(event.target as Node)) {
+        setEditingAllergenIndex(null);
+      }
+    };
+
+    if (editingAllergenIndex !== null) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [editingAllergenIndex]);
+
+  const loadExistingIngredients = async () => {
+    try {
+      const { data } = await supabase
+        .from('ingredients')
+        .select('*')
+        .eq('restaurant_id', restaurantId);
+
+      if (data) {
+        setExistingIngredients(data);
+      }
+    } catch (err) {
+      console.error('Error loading ingredients:', err);
+    } finally {
+      setLoadingIngredients(false);
+    }
+  };
+
+  const loadRecentlyCompletedDishes = async () => {
+    try {
+      // Get menu items updated in the last 3 hours
+      const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+
+      const { data: menuItems } = await supabase
+        .from('menu_items')
+        .select('*')
+        .eq('restaurant_id', restaurantId)
+        .gte('updated_at', threeHoursAgo);
+
+      if (!menuItems || menuItems.length === 0) {
+        setLoadingExistingDishes(false);
+        return;
+      }
+
+      const existingData: Record<string, ExistingDishData> = {};
+      const completedIds = new Set<string>();
+
+      // For each menu item, fetch its ingredients
+      for (const item of menuItems) {
+        // Find matching dish by name (case-insensitive) or by ID
+        const matchingDish = dishes.find(
+          d => d.id === item.id || d.name.toLowerCase() === item.name.toLowerCase()
+        );
+
+        if (matchingDish) {
+          // Fetch ingredients for this menu item
+          const { data: menuItemIngredients } = await supabase
+            .from('menu_item_ingredients')
+            .select('*, ingredient:ingredients(*)')
+            .eq('menu_item_id', item.id);
+
+          const ingredients: SelectedIngredient[] = (menuItemIngredients || []).map((mii: {
+            ingredient_id: string;
+            amount_value: number | null;
+            amount_unit: WeightUnit | null;
+            ingredient: Ingredient;
+          }) => ({
+            ingredientId: mii.ingredient_id,
+            name: mii.ingredient?.name || '',
+            amountValue: mii.amount_value,
+            amountUnit: mii.amount_unit,
+            allergens: mii.ingredient?.contains_allergens || [],
+            isNew: false,
+          }));
+
+          existingData[matchingDish.id] = {
+            menuItemId: item.id,
+            preparation: item.preparation || '',
+            photoUrl: item.photo_url,
+            ingredients,
+            updatedAt: item.updated_at,
+          };
+
+          // If the dish has ingredients, it's considered complete
+          if (ingredients.length > 0) {
+            completedIds.add(matchingDish.id);
+
+            // Pre-populate the form with existing data
+            setDishForms(prev => ({
+              ...prev,
+              [matchingDish.id]: {
+                ingredients,
+                preparation: item.preparation || '',
+                photoFile: null,
+                photoUrl: item.photo_url || '',
+              },
+            }));
+          }
+        }
+      }
+
+      setExistingDishData(existingData);
+      setCompletedDishes(completedIds);
+    } catch (err) {
+      console.error('Error loading recently completed dishes:', err);
+    } finally {
+      setLoadingExistingDishes(false);
+    }
+  };
+
+  const loadSuggestions = async () => {
+    if (!currentDish) return;
+
+    setLoadingSuggestions(true);
+    try {
+      const suggestions = await suggestIngredientsForDish(
+        currentDish.name,
+        currentDish.description || '',
+        existingIngredients.map(i => ({
+          id: i.id,
+          name: i.name,
+          allergens: i.contains_allergens,
+        }))
+      );
+      setSuggestedIngredients(suggestions);
+    } catch (err) {
+      console.error('Error loading suggestions:', err);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, dishId: string) => {
     const file = e.target.files?.[0];
@@ -31,8 +234,161 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       const url = URL.createObjectURL(file);
       setDishForms((prev) => ({
         ...prev,
-        [dishId]: { ...prev[dishId] || { ingredients: '', preparation: '', photoFile: null, photoUrl: '' }, photoFile: file, photoUrl: url },
+        [dishId]: {
+          ...prev[dishId] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '' },
+          photoFile: file,
+          photoUrl: url
+        },
       }));
+    }
+  };
+
+  const addIngredient = (ingredient: SelectedIngredient) => {
+    if (!currentDish) return;
+
+    // Check if already added
+    const alreadyAdded = currentForm?.ingredients.some(
+      i => i.name.toLowerCase() === ingredient.name.toLowerCase()
+    );
+    if (alreadyAdded) return;
+
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '' },
+        ingredients: [...(prev[currentDish.id]?.ingredients || []), ingredient],
+      },
+    }));
+  };
+
+  const removeIngredient = (index: number) => {
+    if (!currentDish) return;
+
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id],
+        ingredients: prev[currentDish.id]?.ingredients.filter((_, i) => i !== index) || [],
+      },
+    }));
+  };
+
+  const updateIngredientAmount = (index: number, value: number | null, unit: WeightUnit | null) => {
+    if (!currentDish) return;
+
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id],
+        ingredients: prev[currentDish.id]?.ingredients.map((ing, i) =>
+          i === index ? { ...ing, amountValue: value, amountUnit: unit } : ing
+        ) || [],
+      },
+    }));
+  };
+
+  const toggleIngredientAllergen = async (index: number, allergen: string) => {
+    if (!currentDish || !currentForm) return;
+
+    const ingredient = currentForm.ingredients[index];
+    const hasAllergen = ingredient.allergens.includes(allergen);
+    const newAllergens = hasAllergen
+      ? ingredient.allergens.filter(a => a !== allergen)
+      : [...ingredient.allergens, allergen];
+
+    // Update local state
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id],
+        ingredients: prev[currentDish.id]?.ingredients.map((ing, i) =>
+          i === index ? { ...ing, allergens: newAllergens } : ing
+        ) || [],
+      },
+    }));
+
+    // If ingredient exists in DB, update its allergens there too
+    if (ingredient.ingredientId) {
+      try {
+        await supabase
+          .from('ingredients')
+          .update({ contains_allergens: newAllergens })
+          .eq('id', ingredient.ingredientId);
+
+        // Update local existing ingredients state
+        setExistingIngredients(prev =>
+          prev.map(ing =>
+            ing.id === ingredient.ingredientId
+              ? { ...ing, contains_allergens: newAllergens }
+              : ing
+          )
+        );
+      } catch (err) {
+        console.error('Error updating ingredient allergens:', err);
+      }
+    }
+  };
+
+  const handleAddExistingIngredient = (ingredient: Ingredient) => {
+    addIngredient({
+      ingredientId: ingredient.id,
+      name: ingredient.name,
+      amountValue: null,
+      amountUnit: 'g',
+      allergens: ingredient.contains_allergens,
+      isNew: false,
+    });
+    setSearchQuery('');
+  };
+
+  const handleAddSuggestedIngredient = (suggestion: SuggestedIngredient) => {
+    addIngredient({
+      ingredientId: suggestion.existingId,
+      name: suggestion.name,
+      amountValue: null,
+      amountUnit: 'g',
+      allergens: suggestion.allergens,
+      isNew: !suggestion.existingId,
+    });
+  };
+
+  const handleAddNewIngredient = async () => {
+    if (!newIngredientName.trim() || !currentDish) return;
+
+    setDetectingAllergens(true);
+    try {
+      // Detect allergens for the new ingredient
+      const allergens = await detectAllergens(newIngredientName);
+
+      const amountVal = newIngredientAmountValue ? parseFloat(newIngredientAmountValue) : null;
+
+      addIngredient({
+        name: newIngredientName.trim(),
+        amountValue: amountVal,
+        amountUnit: newIngredientAmountUnit,
+        allergens,
+        isNew: true,
+      });
+
+      setNewIngredientName('');
+      setNewIngredientAmountValue('');
+      setNewIngredientAmountUnit('g');
+    } catch (err) {
+      console.error('Error detecting allergens:', err);
+      // Add without allergens if detection fails
+      const amountVal = newIngredientAmountValue ? parseFloat(newIngredientAmountValue) : null;
+      addIngredient({
+        name: newIngredientName.trim(),
+        amountValue: amountVal,
+        amountUnit: newIngredientAmountUnit,
+        allergens: [],
+        isNew: true,
+      });
+      setNewIngredientName('');
+      setNewIngredientAmountValue('');
+      setNewIngredientAmountUnit('g');
+    } finally {
+      setDetectingAllergens(false);
     }
   };
 
@@ -44,6 +400,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     try {
       let photoUrl = null;
 
+      // Upload photo if provided
       if (currentForm.photoFile) {
         const fileExt = currentForm.photoFile.name.split('.').pop();
         const fileName = `${restaurantId}/${currentDish.id}.${fileExt}`;
@@ -61,21 +418,116 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
         photoUrl = urlData.publicUrl;
       }
 
-      const { error: insertError } = await supabase.from('menu_items').insert({
-        restaurant_id: restaurantId,
-        name: currentDish.name,
-        description: currentDish.description,
-        category: currentDish.category,
-        price: currentDish.price,
-        photo_url: photoUrl,
-        modification_policy: 'Please inform your server of any dietary restrictions.',
-        is_active: true,
-      });
+      // Check if menu item exists (for update case)
+      const { data: existingItem } = await supabase
+        .from('menu_items')
+        .select('id')
+        .eq('id', currentDish.id)
+        .maybeSingle();
 
-      if (insertError) throw insertError;
+      let menuItemId: string;
+
+      if (existingItem) {
+        // Update existing menu item
+        const { error: updateError } = await supabase
+          .from('menu_items')
+          .update({
+            name: currentDish.name,
+            description: currentDish.description,
+            preparation: currentForm.preparation,
+            category: currentDish.category,
+            price: currentDish.price,
+            photo_url: photoUrl || undefined,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', currentDish.id);
+
+        if (updateError) throw updateError;
+        menuItemId = currentDish.id;
+
+        // Delete existing menu_item_ingredients for this item
+        await supabase
+          .from('menu_item_ingredients')
+          .delete()
+          .eq('menu_item_id', menuItemId);
+      } else {
+        // Insert new menu item
+        const { data: newItem, error: insertError } = await supabase
+          .from('menu_items')
+          .insert({
+            restaurant_id: restaurantId,
+            name: currentDish.name,
+            description: currentDish.description,
+            preparation: currentForm.preparation,
+            category: currentDish.category,
+            price: currentDish.price,
+            photo_url: photoUrl,
+            modification_policy: 'Please inform your server of any dietary restrictions.',
+            is_active: true,
+          })
+          .select('id')
+          .single();
+
+        if (insertError) throw insertError;
+        menuItemId = newItem.id;
+      }
+
+      // Process ingredients
+      for (const ing of currentForm.ingredients) {
+        let ingredientId = ing.ingredientId;
+
+        // Create new ingredient if needed
+        if (ing.isNew && !ingredientId) {
+          const { data: newIng, error: ingError } = await supabase
+            .from('ingredients')
+            .insert({
+              restaurant_id: restaurantId,
+              name: ing.name,
+              contains_allergens: ing.allergens,
+            })
+            .select('id')
+            .single();
+
+          if (ingError) {
+            // If it's a unique constraint violation, fetch the existing one
+            if (ingError.code === '23505') {
+              const { data: existingIng } = await supabase
+                .from('ingredients')
+                .select('id')
+                .eq('restaurant_id', restaurantId)
+                .eq('name', ing.name)
+                .single();
+              ingredientId = existingIng?.id;
+            } else {
+              throw ingError;
+            }
+          } else {
+            ingredientId = newIng.id;
+            // Update local state with new ingredient
+            setExistingIngredients(prev => [...prev, {
+              id: newIng.id,
+              restaurant_id: restaurantId,
+              name: ing.name,
+              contains_allergens: ing.allergens,
+              created_at: new Date().toISOString(),
+            }]);
+          }
+        }
+
+        // Create menu_item_ingredient relationship
+        if (ingredientId) {
+          await supabase.from('menu_item_ingredients').insert({
+            menu_item_id: menuItemId,
+            ingredient_id: ingredientId,
+            amount_value: ing.amountValue,
+            amount_unit: ing.amountUnit,
+          });
+        }
+      }
 
       setCompletedDishes((prev) => new Set([...prev, currentDish.id]));
       setCurrentDishIndex(null);
+      setSuggestedIngredients([]);
     } catch (err) {
       console.error('Error saving dish:', err);
       alert('Failed to save dish. Please try again.');
@@ -88,8 +540,84 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     onComplete();
   };
 
+  const handleMarkAsComplete = (dishId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent opening the dish editor
+    setCompletedDishes(prev => new Set([...prev, dishId]));
+  };
+
+  const handleAddCustomAllergen = async (index: number) => {
+    const allergen = customAllergenInput.trim();
+    if (!allergen || !currentDish || !currentForm) return;
+
+    const ingredient = currentForm.ingredients[index];
+
+    // Check if allergen already exists (case-insensitive)
+    if (ingredient.allergens.some(a => a.toLowerCase() === allergen.toLowerCase())) {
+      setCustomAllergenInput('');
+      return;
+    }
+
+    const newAllergens = [...ingredient.allergens, allergen];
+
+    // Update local state
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id],
+        ingredients: prev[currentDish.id]?.ingredients.map((ing, i) =>
+          i === index ? { ...ing, allergens: newAllergens } : ing
+        ) || [],
+      },
+    }));
+
+    // If ingredient exists in DB, update its allergens there too
+    if (ingredient.ingredientId) {
+      try {
+        await supabase
+          .from('ingredients')
+          .update({ contains_allergens: newAllergens })
+          .eq('id', ingredient.ingredientId);
+
+        // Update local existing ingredients state
+        setExistingIngredients(prev =>
+          prev.map(ing =>
+            ing.id === ingredient.ingredientId
+              ? { ...ing, contains_allergens: newAllergens }
+              : ing
+          )
+        );
+      } catch (err) {
+        console.error('Error updating ingredient allergens:', err);
+      }
+    }
+
+    setCustomAllergenInput('');
+  };
+
   const completedCount = completedDishes.size;
   const progress = (completedCount / dishes.length) * 100;
+
+  // Filter existing ingredients based on search
+  const filteredIngredients = existingIngredients.filter(ing =>
+    ing.name.toLowerCase().includes(searchQuery.toLowerCase()) &&
+    !currentForm?.ingredients.some(i => i.name.toLowerCase() === ing.name.toLowerCase())
+  );
+
+  // Filter suggestions to exclude already added
+  const filteredSuggestions = suggestedIngredients.filter(
+    s => !currentForm?.ingredients.some(i => i.name.toLowerCase() === s.name.toLowerCase())
+  );
+
+  if (loadingIngredients || loadingExistingDishes) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="text-slate-600 flex items-center gap-2">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          Loading dishes...
+        </div>
+      </div>
+    );
+  }
 
   if (currentDishIndex === null) {
     return (
@@ -100,7 +628,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
               Add Dish Details
             </h1>
             <p className="text-slate-600 mb-6">
-              Fill in ingredient and preparation information for each dish
+              Add ingredients and preparation information for each dish
             </p>
 
             <div className="mb-6">
@@ -121,33 +649,66 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             <div className="space-y-3 mb-6">
               {dishes.map((dish, index) => {
                 const isCompleted = completedDishes.has(dish.id);
+                const existingData = existingDishData[dish.id];
+                const hasExistingData = existingData && existingData.ingredients.length > 0;
+
                 return (
-                  <button
+                  <div
                     key={dish.id}
-                    onClick={() => setCurrentDishIndex(index)}
-                    className={`w-full p-4 rounded-xl border-2 text-left transition-all flex items-center justify-between ${
+                    className={`w-full p-4 rounded-xl border-2 transition-all ${
                       isCompleted
                         ? 'bg-green-50 border-green-200'
+                        : hasExistingData
+                        ? 'bg-blue-50 border-blue-200'
                         : 'bg-white border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3">
-                        {isCompleted && (
-                          <div className="bg-green-500 text-white rounded-full p-1">
+                    <div className="flex items-center justify-between">
+                      <button
+                        onClick={() => setCurrentDishIndex(index)}
+                        className="flex-1 text-left flex items-center gap-3"
+                      >
+                        {isCompleted ? (
+                          <div className="bg-green-500 text-white rounded-full p-1 flex-shrink-0">
                             <Check className="w-4 h-4" />
                           </div>
-                        )}
-                        <div>
+                        ) : hasExistingData ? (
+                          <div className="bg-blue-500 text-white rounded-full p-1 flex-shrink-0">
+                            <Clock className="w-4 h-4" />
+                          </div>
+                        ) : null}
+                        <div className="min-w-0">
                           <h3 className="font-semibold text-slate-900">{dish.name}</h3>
                           <p className="text-sm text-slate-600">
                             {dish.category} • ${dish.price}
                           </p>
+                          {hasExistingData && !isCompleted && (
+                            <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                              <span>Saved {formatTimeAgo(existingData.updatedAt)}</span>
+                              <span>•</span>
+                              <span>{existingData.ingredients.length} ingredients</span>
+                            </p>
+                          )}
                         </div>
+                      </button>
+                      <div className="flex items-center gap-2 ml-3 flex-shrink-0">
+                        {hasExistingData && !isCompleted && (
+                          <button
+                            onClick={(e) => handleMarkAsComplete(dish.id, e)}
+                            className="px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
+                          >
+                            Keep Complete
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setCurrentDishIndex(index)}
+                          className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                        >
+                          <ChevronRight className="w-5 h-5" />
+                        </button>
                       </div>
                     </div>
-                    <ChevronRight className="w-5 h-5 text-slate-400" />
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -162,10 +723,9 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             ) : (
               <button
                 onClick={handleFinish}
-                className="w-full bg-slate-300 text-slate-600 py-4 rounded-xl font-semibold cursor-not-allowed"
-                disabled
+                className="w-full bg-slate-900 text-white py-4 rounded-xl font-semibold hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl"
               >
-                Complete all dishes to continue
+                Continue ({completedCount}/{dishes.length} completed)
               </button>
             )}
           </div>
@@ -176,10 +736,13 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
 
   return (
     <div className="min-h-screen p-4 py-8">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-4xl mx-auto">
         <div className="bg-white rounded-2xl shadow-2xl p-8">
           <button
-            onClick={() => setCurrentDishIndex(null)}
+            onClick={() => {
+              setCurrentDishIndex(null);
+              setSuggestedIngredients([]);
+            }}
             className="text-slate-600 hover:text-slate-900 mb-6 flex items-center gap-2 text-sm"
           >
             ← Back to All Dishes
@@ -193,27 +756,310 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
           </div>
 
           <div className="space-y-6">
+            {/* Ingredients Section */}
             <div>
               <label className="block text-sm font-semibold text-slate-900 mb-2">
                 Ingredients
               </label>
-              <p className="text-xs text-slate-600 mb-2">
-                List every ingredient and its exact amount (e.g., "Salmon fillet: 200g", "Olive oil: 15ml", "Wheat croutons: 30g")
-              </p>
-              <textarea
-                value={currentForm?.ingredients || ''}
-                onChange={(e) =>
-                  setDishForms((prev) => ({
-                    ...prev,
-                    [currentDish.id]: { ...currentForm!, ingredients: e.target.value },
-                  }))
-                }
-                rows={8}
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent resize-none"
-                placeholder="Enter each ingredient on a new line..."
-              />
+
+              {/* AI Suggestions */}
+              {(loadingSuggestions || filteredSuggestions.length > 0) && (
+                <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Sparkles className="w-4 h-4 text-purple-600" />
+                    <span className="text-sm font-semibold text-purple-900">AI Suggestions</span>
+                    {loadingSuggestions && <Loader2 className="w-4 h-4 animate-spin text-purple-600" />}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {filteredSuggestions.slice(0, 10).map((suggestion, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleAddSuggestedIngredient(suggestion)}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 ${
+                          suggestion.existingId
+                            ? 'bg-purple-200 text-purple-900 hover:bg-purple-300'
+                            : 'bg-purple-100 text-purple-800 hover:bg-purple-200'
+                        }`}
+                      >
+                        <Plus className="w-3 h-3" />
+                        {suggestion.name}
+                        {suggestion.existingId && (
+                          <span className="text-xs opacity-70">(saved)</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Selected Ingredients */}
+              {currentForm && currentForm.ingredients.length > 0 && (
+                <div className="space-y-2 mb-4">
+                  {currentForm.ingredients.map((ing, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200 relative"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-slate-900 truncate">{ing.name}</span>
+                          {ing.isNew && (
+                            <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded flex-shrink-0">new</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {ing.allergens.length > 0 ? (
+                            <div className="flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3 text-amber-600 flex-shrink-0" />
+                              <span className="text-xs text-amber-700 truncate">
+                                {ing.allergens.join(', ')}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400">No allergens</span>
+                          )}
+                          <button
+                            onClick={() => setEditingAllergenIndex(editingAllergenIndex === index ? null : index)}
+                            className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded transition-colors"
+                            title="Edit allergens"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <input
+                          type="number"
+                          value={ing.amountValue ?? ''}
+                          onChange={(e) => updateIngredientAmount(
+                            index,
+                            e.target.value ? parseFloat(e.target.value) : null,
+                            ing.amountUnit
+                          )}
+                          placeholder="0"
+                          min="0"
+                          step="0.1"
+                          className="w-20 px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                        />
+                        <select
+                          value={ing.amountUnit || 'g'}
+                          onChange={(e) => updateIngredientAmount(
+                            index,
+                            ing.amountValue,
+                            e.target.value as WeightUnit
+                          )}
+                          className="px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent bg-white"
+                        >
+                          <optgroup label="Weight">
+                            {WEIGHT_UNITS.filter(u => u.category === 'weight').map(u => (
+                              <option key={u.value} value={u.value}>{u.value}</option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Volume">
+                            {WEIGHT_UNITS.filter(u => u.category === 'volume').map(u => (
+                              <option key={u.value} value={u.value}>{u.value}</option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Count">
+                            {WEIGHT_UNITS.filter(u => u.category === 'count').map(u => (
+                              <option key={u.value} value={u.value}>{u.value}</option>
+                            ))}
+                          </optgroup>
+                        </select>
+                      </div>
+                      <button
+                        onClick={() => removeIngredient(index)}
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+
+                      {/* Allergen Editor Dropdown */}
+                      {editingAllergenIndex === index && (
+                        <div
+                          ref={allergenEditorRef}
+                          className="absolute left-0 top-full mt-1 z-10 bg-white border border-slate-200 rounded-xl shadow-lg p-3 w-80 max-h-80 overflow-y-auto"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-semibold text-slate-900">Edit Allergens</span>
+                            <button
+                              onClick={() => setEditingAllergenIndex(null)}
+                              className="p-1 text-slate-400 hover:text-slate-600 rounded"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                          <p className="text-xs text-slate-500 mb-3">
+                            Select allergens for "{ing.name}". Changes are saved automatically.
+                          </p>
+
+                          {/* Common Allergens */}
+                          <div className="flex flex-wrap gap-1.5 mb-3">
+                            {COMMON_ALLERGENS.map((allergen) => {
+                              const isSelected = ing.allergens.includes(allergen);
+                              return (
+                                <button
+                                  key={allergen}
+                                  onClick={() => toggleIngredientAllergen(index, allergen)}
+                                  className={`px-2.5 py-1 text-xs font-medium rounded-full transition-colors ${
+                                    isSelected
+                                      ? 'bg-amber-500 text-white'
+                                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  {isSelected && <Check className="w-3 h-3 inline mr-1" />}
+                                  {allergen}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Custom Allergens (not in COMMON_ALLERGENS) */}
+                          {ing.allergens.filter(a => !COMMON_ALLERGENS.includes(a as typeof COMMON_ALLERGENS[number])).length > 0 && (
+                            <div className="mb-3">
+                              <p className="text-xs text-slate-500 mb-1.5">Custom allergens:</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {ing.allergens
+                                  .filter(a => !COMMON_ALLERGENS.includes(a as typeof COMMON_ALLERGENS[number]))
+                                  .map((allergen) => (
+                                    <button
+                                      key={allergen}
+                                      onClick={() => toggleIngredientAllergen(index, allergen)}
+                                      className="px-2.5 py-1 text-xs font-medium rounded-full bg-purple-500 text-white transition-colors hover:bg-purple-600"
+                                    >
+                                      <Check className="w-3 h-3 inline mr-1" />
+                                      {allergen}
+                                    </button>
+                                  ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Add Custom Allergen */}
+                          <div className="border-t border-slate-200 pt-3">
+                            <p className="text-xs text-slate-500 mb-2">Add custom allergen:</p>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={customAllergenInput}
+                                onChange={(e) => setCustomAllergenInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleAddCustomAllergen(index);
+                                  }
+                                }}
+                                placeholder="e.g., Corn, Nightshades"
+                                className="flex-1 px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                              />
+                              <button
+                                onClick={() => handleAddCustomAllergen(index)}
+                                disabled={!customAllergenInput.trim()}
+                                className="px-3 py-1.5 text-xs font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Add
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Search Existing Ingredients */}
+              <div className="mb-4">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search existing ingredients..."
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                />
+                {searchQuery && filteredIngredients.length > 0 && (
+                  <div className="mt-2 max-h-40 overflow-y-auto border border-slate-200 rounded-lg">
+                    {filteredIngredients.map((ing) => (
+                      <button
+                        key={ing.id}
+                        onClick={() => handleAddExistingIngredient(ing)}
+                        className="w-full px-4 py-2 text-left hover:bg-slate-50 flex items-center justify-between border-b border-slate-100 last:border-0"
+                      >
+                        <span className="font-medium text-slate-900">{ing.name}</span>
+                        {ing.contains_allergens.length > 0 && (
+                          <span className="text-xs text-amber-600">
+                            {ing.contains_allergens.join(', ')}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Add New Ingredient */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                <p className="text-sm text-slate-600 mb-3">Add a new ingredient:</p>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    type="text"
+                    value={newIngredientName}
+                    onChange={(e) => setNewIngredientName(e.target.value)}
+                    placeholder="Ingredient name"
+                    className="flex-1 min-w-[150px] px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                  />
+                  <div className="flex gap-1">
+                    <input
+                      type="number"
+                      value={newIngredientAmountValue}
+                      onChange={(e) => setNewIngredientAmountValue(e.target.value)}
+                      placeholder="0"
+                      min="0"
+                      step="0.1"
+                      className="w-20 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                    />
+                    <select
+                      value={newIngredientAmountUnit}
+                      onChange={(e) => setNewIngredientAmountUnit(e.target.value as WeightUnit)}
+                      className="px-2 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent bg-white"
+                    >
+                      <optgroup label="Weight">
+                        {WEIGHT_UNITS.filter(u => u.category === 'weight').map(u => (
+                          <option key={u.value} value={u.value}>{u.value}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Volume">
+                        {WEIGHT_UNITS.filter(u => u.category === 'volume').map(u => (
+                          <option key={u.value} value={u.value}>{u.value}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Count">
+                        {WEIGHT_UNITS.filter(u => u.category === 'count').map(u => (
+                          <option key={u.value} value={u.value}>{u.value}</option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
+                  <button
+                    onClick={handleAddNewIngredient}
+                    disabled={!newIngredientName.trim() || detectingAllergens}
+                    className="px-4 py-2 bg-slate-900 text-white rounded-lg font-semibold hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {detectingAllergens ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4" />
+                    )}
+                    Add
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500 mt-2">
+                  AI will automatically detect common allergens for new ingredients
+                </p>
+              </div>
             </div>
 
+            {/* Preparation Section */}
             <div>
               <label className="block text-sm font-semibold text-slate-900 mb-2">
                 Preparation Process
@@ -226,15 +1072,16 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                 onChange={(e) =>
                   setDishForms((prev) => ({
                     ...prev,
-                    [currentDish.id]: { ...currentForm!, preparation: e.target.value },
+                    [currentDish!.id]: { ...currentForm!, preparation: e.target.value },
                   }))
                 }
                 rows={6}
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent resize-none"
+                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent resize-y min-h-[150px]"
                 placeholder="Describe how this dish is prepared..."
               />
             </div>
 
+            {/* Photo Section */}
             <div>
               <label className="block text-sm font-semibold text-slate-900 mb-2">
                 Dish Photo (Optional)
@@ -247,14 +1094,14 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                 <div className="relative">
                   <img
                     src={currentForm.photoUrl}
-                    alt={currentDish.name}
+                    alt={currentDish!.name}
                     className="w-full h-48 object-cover rounded-lg"
                   />
                   <button
                     onClick={() =>
                       setDishForms((prev) => ({
                         ...prev,
-                        [currentDish.id]: { ...currentForm!, photoFile: null, photoUrl: '' },
+                        [currentDish!.id]: { ...currentForm!, photoFile: null, photoUrl: '' },
                       }))
                     }
                     className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full hover:bg-red-600 transition-colors"
@@ -271,7 +1118,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                   <input
                     type="file"
                     accept="image/*"
-                    onChange={(e) => handlePhotoUpload(e, currentDish.id)}
+                    onChange={(e) => handlePhotoUpload(e, currentDish!.id)}
                     className="hidden"
                   />
                 </label>
@@ -280,10 +1127,17 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
 
             <button
               onClick={handleSaveDish}
-              disabled={saving || !currentForm?.ingredients || !currentForm?.preparation}
-              className="w-full bg-slate-900 text-white py-4 rounded-xl font-semibold hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={saving || !currentForm || currentForm.ingredients.length === 0}
+              className="w-full bg-slate-900 text-white py-4 rounded-xl font-semibold hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              {saving ? 'Saving...' : 'Save Dish'}
+              {saving ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save Dish'
+              )}
             </button>
           </div>
         </div>
