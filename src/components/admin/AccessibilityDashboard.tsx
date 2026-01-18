@@ -177,8 +177,8 @@ export default function AccessibilityDashboard({ restaurantId }: AccessibilityDa
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">Accessibility Dashboard</h2>
-        <p className="text-sm text-slate-600 mt-1">
+        <h2 className="text-2xl font-bold text-white">Accessibility Dashboard</h2>
+        <p className="text-sm text-slate-400 mt-1">
           Understand how accessible your menu is to customers with dietary restrictions
         </p>
       </div>

@@ -10,8 +10,20 @@ type Ingredient = Database['public']['Tables']['ingredients']['Row'];
 type CookingStep = Database['public']['Tables']['cooking_steps']['Row'];
 type Restaurant = Database['public']['Tables']['restaurants']['Row'];
 
+interface SubstituteInfo {
+  id: string;
+  name: string;
+  allergens: string[];
+}
+
+interface IngredientWithModifications extends Ingredient {
+  is_removable: boolean;
+  is_substitutable: boolean;
+  substitutes: SubstituteInfo[];
+}
+
 interface MenuItemWithData extends MenuItem {
-  ingredients: Ingredient[];
+  ingredients: IngredientWithModifications[];
   cookingSteps: CookingStep[];
 }
 
@@ -60,10 +72,38 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
     if (items) {
       const itemsWithData = await Promise.all(
         items.map(async (item) => {
-          const { data: ingredients } = await supabase
-            .from('ingredients')
-            .select('*')
+          // Load ingredients via junction table
+          const { data: menuItemIngredients } = await supabase
+            .from('menu_item_ingredients')
+            .select('*, ingredient:ingredients(*)')
             .eq('menu_item_id', item.id);
+
+          // Get all menu_item_ingredient IDs to fetch substitutes
+          const miiIds = (menuItemIngredients || []).map((mii: any) => mii.id);
+
+          // Fetch substitutes for all menu_item_ingredients
+          const { data: substitutesData } = miiIds.length > 0 ? await supabase
+            .from('ingredient_substitutes')
+            .select('*, substitute:ingredients(*)')
+            .in('menu_item_ingredient_id', miiIds) : { data: [] };
+
+          const ingredients: IngredientWithModifications[] = (menuItemIngredients || []).map((mii: any) => {
+            // Find substitutes for this menu_item_ingredient
+            const subs = (substitutesData || [])
+              .filter((s: any) => s.menu_item_ingredient_id === mii.id)
+              .map((s: any) => ({
+                id: s.substitute_ingredient_id,
+                name: s.substitute?.name || '',
+                allergens: s.substitute?.contains_allergens || [],
+              }));
+
+            return {
+              ...mii.ingredient,
+              is_removable: mii.is_removable || false,
+              is_substitutable: mii.is_substitutable || false,
+              substitutes: subs,
+            };
+          });
 
           const { data: cookingSteps } = await supabase
             .from('cooking_steps')
@@ -73,7 +113,7 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
 
           return {
             ...item,
-            ingredients: ingredients || [],
+            ingredients,
             cookingSteps: cookingSteps || [],
           };
         })

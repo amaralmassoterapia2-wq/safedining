@@ -55,7 +55,18 @@ function AppContent() {
       if (!restaurant.terms_accepted || !restaurant.onboarding_completed) {
         setRestaurantView('onboarding');
       } else {
-        setRestaurantView('dashboard');
+        // Check if restaurant has any menu items
+        const { count } = await supabase
+          .from('menu_items')
+          .select('*', { count: 'exact', head: true })
+          .eq('restaurant_id', restaurant.id);
+
+        if (count === 0) {
+          // No menu items - force onboarding to scan menu
+          setRestaurantView('onboarding');
+        } else {
+          setRestaurantView('dashboard');
+        }
       }
     }
   };

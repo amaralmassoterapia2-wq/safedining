@@ -112,8 +112,8 @@ export default function ChefRequests({ restaurantId }: ChefRequestsProps) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">Chef Requests</h2>
-        <p className="text-sm text-slate-600 mt-1">
+        <h2 className="text-2xl font-bold text-white">Chef Requests</h2>
+        <p className="text-sm text-slate-400 mt-1">
           Respond to customer inquiries about dish modifications
         </p>
       </div>

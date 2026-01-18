@@ -88,6 +88,7 @@ export type Database = {
           restaurant_id: string;
           name: string;
           description: string | null;
+          description_allergens: string[];
           price: number | null;
           category: string | null;
           preparation: string | null;
@@ -101,6 +102,7 @@ export type Database = {
           restaurant_id: string;
           name: string;
           description?: string | null;
+          description_allergens?: string[];
           price?: number | null;
           category?: string | null;
           preparation?: string | null;
@@ -114,6 +116,7 @@ export type Database = {
           restaurant_id?: string;
           name?: string;
           description?: string | null;
+          description_allergens?: string[];
           price?: number | null;
           category?: string | null;
           preparation?: string | null;
@@ -153,6 +156,8 @@ export type Database = {
           ingredient_id: string;
           amount_value: number | null;
           amount_unit: WeightUnit | null;
+          is_removable: boolean;
+          is_substitutable: boolean;
           created_at: string;
         };
         Insert: {
@@ -161,6 +166,8 @@ export type Database = {
           ingredient_id: string;
           amount_value?: number | null;
           amount_unit?: WeightUnit | null;
+          is_removable?: boolean;
+          is_substitutable?: boolean;
           created_at?: string;
         };
         Update: {
@@ -169,6 +176,28 @@ export type Database = {
           ingredient_id?: string;
           amount_value?: number | null;
           amount_unit?: WeightUnit | null;
+          is_removable?: boolean;
+          is_substitutable?: boolean;
+          created_at?: string;
+        };
+      };
+      ingredient_substitutes: {
+        Row: {
+          id: string;
+          menu_item_ingredient_id: string;
+          substitute_ingredient_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          menu_item_ingredient_id: string;
+          substitute_ingredient_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          menu_item_ingredient_id?: string;
+          substitute_ingredient_id?: string;
           created_at?: string;
         };
       };

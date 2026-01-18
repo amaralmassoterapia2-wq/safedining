@@ -735,6 +735,166 @@ Identify any cross-contamination risks from the preparation method.`,
 }
 
 /**
+ * Detect cross-contact allergen risks from a cooking step description
+ * Returns an array of allergen categories that might be cross-contamination risks
+ */
+export async function detectCrossContactRisks(stepDescription: string): Promise<string[]> {
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here' || !stepDescription.trim()) {
+    return [];
+  }
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a food safety expert. Analyze cooking step descriptions for potential cross-contamination risks.
+
+VALID ALLERGEN CATEGORIES (only use these exact names):
+${ALLERGEN_CATEGORIES}
+
+${ALLERGEN_MAPPING_REFERENCE}
+
+Your task:
+- Identify any cross-contamination risks mentioned or implied in the cooking step
+- Look for: shared equipment (fryers, grills, pans), cooking oils, shared surfaces, utensils
+- Look for mentions of allergen-containing foods being prepared nearby or with shared equipment
+- Examples:
+  - "fried in the same oil as shrimp" -> ["Shellfish"]
+  - "grilled on shared surface with fish" -> ["Fish"]
+  - "cooked in butter" -> ["Milk"] (if it's cross-contact, not an ingredient)
+  - "uses same cutting board as nuts" -> ["Tree Nuts"]
+  - "prepared in kitchen that handles peanuts" -> ["Peanuts"]
+
+Return ONLY a JSON array of allergen category names that are cross-contamination risks.
+If no risks detected, return empty array [].
+Do NOT include allergens that are actual ingredients - only cross-contamination from shared equipment/environment.`,
+          },
+          {
+            role: 'user',
+            content: `Cooking step: "${stepDescription}"
+
+What cross-contamination allergen risks are present? Return only the JSON array.`,
+          },
+        ],
+        max_tokens: 200,
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to detect cross-contact risks:', response.status);
+      return [];
+    }
+
+    const data = await response.json();
+    const content: string = data.choices[0]?.message?.content || '[]';
+
+    // Parse JSON array
+    const jsonMatch = content.match(/\[[\s\S]*?\]/);
+    if (jsonMatch) {
+      const allergens: string[] = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(allergens)) {
+        return allergens
+          .filter((a): a is string => typeof a === 'string')
+          .filter(isValidAllergen);
+      }
+    }
+    return [];
+  } catch (error) {
+    console.error('Error detecting cross-contact risks:', error);
+    return [];
+  }
+}
+
+/**
+ * Detect allergens mentioned in a dish description text
+ * Returns an array of allergen categories found in the description
+ */
+export async function detectAllergensFromDescription(description: string): Promise<string[]> {
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here' || !description.trim()) {
+    return [];
+  }
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a food allergen expert. Analyze dish descriptions to identify allergens that are explicitly mentioned or strongly implied.
+
+VALID ALLERGEN CATEGORIES (only use these exact names):
+${ALLERGEN_CATEGORIES}
+
+${ALLERGEN_MAPPING_REFERENCE}
+
+Your task:
+- Identify allergens that are EXPLICITLY mentioned in the description
+- Also identify allergens that are STRONGLY IMPLIED by ingredients/preparations mentioned
+- Examples:
+  - "served with a creamy peanut sauce" -> ["Peanuts", "Milk"]
+  - "topped with parmesan and walnuts" -> ["Milk", "Tree Nuts"]
+  - "breaded and deep fried" -> ["Wheat", "Gluten"]
+  - "made with our signature tahini dressing" -> ["Sesame"]
+  - "grilled salmon fillet" -> ["Fish"]
+  - "shrimp scampi in garlic butter" -> ["Shellfish", "Milk"]
+
+Return ONLY a JSON array of allergen category names found in the description.
+If no allergens are detected, return empty array [].
+Be conservative - only include allergens that are clearly indicated.`,
+          },
+          {
+            role: 'user',
+            content: `Dish description: "${description}"
+
+What allergens are mentioned or implied? Return only the JSON array.`,
+          },
+        ],
+        max_tokens: 200,
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to detect allergens from description:', response.status);
+      return [];
+    }
+
+    const data = await response.json();
+    const content: string = data.choices[0]?.message?.content || '[]';
+
+    // Parse JSON array
+    const jsonMatch = content.match(/\[[\s\S]*?\]/);
+    if (jsonMatch) {
+      const allergens: string[] = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(allergens)) {
+        return allergens
+          .filter((a): a is string => typeof a === 'string')
+          .filter(isValidAllergen);
+      }
+    }
+    return [];
+  } catch (error) {
+    console.error('Error detecting allergens from description:', error);
+    return [];
+  }
+}
+
+/**
  * Quick allergen summary for display (combines ingredients + preparation analysis)
  */
 export async function getMenuItemAllergenSummary(

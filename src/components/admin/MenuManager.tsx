@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react';
 import { supabase, Database } from '../../lib/supabase';
 import MenuItemForm from './MenuItemForm';
-import { Plus, Edit2, Trash2, Eye, EyeOff } from 'lucide-react';
+import MenuDigitization from '../onboarding/MenuDigitization';
+import DishDetailsInput from '../onboarding/DishDetailsInput';
+import { Plus, Edit2, Trash2, Eye, EyeOff, Camera, Upload, ArrowLeft } from 'lucide-react';
+import { ScannedDish } from '../../pages/RestaurantOnboarding';
 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
+
+type ViewMode = 'list' | 'form' | 'scan' | 'details';
 
 interface MenuManagerProps {
   restaurantId: string;
@@ -12,8 +17,9 @@ interface MenuManagerProps {
 export default function MenuManager({ restaurantId }: MenuManagerProps) {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [scannedDishes, setScannedDishes] = useState<ScannedDish[]>([]);
 
   useEffect(() => {
     loadMenuItems();
@@ -35,13 +41,23 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
   };
 
   const handleToggleActive = async (item: MenuItem) => {
+    // Optimistically update the UI
+    setMenuItems(prev => prev.map(m =>
+      m.id === item.id ? { ...m, is_active: !m.is_active } : m
+    ));
+
     const { error } = await supabase
       .from('menu_items')
       .update({ is_active: !item.is_active })
       .eq('id', item.id);
 
-    if (!error) {
-      loadMenuItems();
+    if (error) {
+      console.error('Error toggling item visibility:', error);
+      // Revert the optimistic update on error
+      setMenuItems(prev => prev.map(m =>
+        m.id === item.id ? { ...m, is_active: item.is_active } : m
+      ));
+      alert('Failed to update item visibility. Please try again.');
     }
   };
 
@@ -65,13 +81,28 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
 
   const handleEdit = (item: MenuItem) => {
     setEditingItem(item);
-    setShowForm(true);
+    setViewMode('form');
   };
 
   const handleFormClose = () => {
-    setShowForm(false);
+    setViewMode('list');
     setEditingItem(null);
     loadMenuItems();
+  };
+
+  const handleScanComplete = (dishes: ScannedDish[]) => {
+    setScannedDishes(dishes);
+    setViewMode('details');
+  };
+
+  const handleDetailsComplete = () => {
+    setScannedDishes([]);
+    setViewMode('list');
+    loadMenuItems();
+  };
+
+  const handleBackFromScan = () => {
+    setViewMode('list');
   };
 
   const categorizedItems = menuItems.reduce((acc, item) => {
@@ -83,7 +114,61 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
     return acc;
   }, {} as Record<string, MenuItem[]>);
 
-  if (showForm) {
+  // Scan menu view
+  if (viewMode === 'scan') {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={handleBackFromScan}
+            className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5 text-slate-400" />
+          </button>
+          <div>
+            <h2 className="text-2xl font-bold text-white">Scan Menu Image</h2>
+            <p className="text-sm text-slate-400 mt-1">
+              Upload or capture a menu image to add new items
+            </p>
+          </div>
+        </div>
+        <MenuDigitization
+          restaurantId={restaurantId}
+          onComplete={handleScanComplete}
+        />
+      </div>
+    );
+  }
+
+  // Dish details editing view (after scan)
+  if (viewMode === 'details' && scannedDishes.length > 0) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setViewMode('scan')}
+            className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5 text-slate-400" />
+          </button>
+          <div>
+            <h2 className="text-2xl font-bold text-white">Edit Scanned Items</h2>
+            <p className="text-sm text-slate-400 mt-1">
+              Review and add details to the scanned menu items
+            </p>
+          </div>
+        </div>
+        <DishDetailsInput
+          restaurantId={restaurantId}
+          scannedDishes={scannedDishes}
+          onComplete={handleDetailsComplete}
+        />
+      </div>
+    );
+  }
+
+  // Manual form view
+  if (viewMode === 'form') {
     return (
       <MenuItemForm
         restaurantId={restaurantId}
@@ -105,37 +190,55 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">Menu Items</h2>
-          <p className="text-sm text-slate-600 mt-1">
+          <h2 className="text-2xl font-bold text-white">Menu Items</h2>
+          <p className="text-sm text-slate-400 mt-1">
             Manage your restaurant's menu with detailed allergen information
           </p>
         </div>
-        <button
-          onClick={() => setShowForm(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          Add Menu Item
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setViewMode('scan')}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-colors"
+          >
+            <Camera className="w-4 h-4" />
+            Scan Menu
+          </button>
+          <button
+            onClick={() => setViewMode('form')}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Add Manually
+          </button>
+        </div>
       </div>
 
       {menuItems.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
-          <div className="max-w-sm mx-auto">
+          <div className="max-w-md mx-auto">
             <div className="text-6xl mb-4">🍽️</div>
             <h3 className="text-lg font-semibold text-slate-900 mb-2">
               No Menu Items Yet
             </h3>
             <p className="text-slate-600 mb-6">
-              Start building your menu by adding your first dish with detailed ingredients and allergen information.
+              Start building your menu by scanning an image of your menu or adding items manually.
             </p>
-            <button
-              onClick={() => setShowForm(true)}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              Add Your First Item
-            </button>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <button
+                onClick={() => setViewMode('scan')}
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+              >
+                <Camera className="w-4 h-4" />
+                Scan Menu Image
+              </button>
+              <button
+                onClick={() => setViewMode('form')}
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Add Manually
+              </button>
+            </div>
           </div>
         </div>
       ) : (

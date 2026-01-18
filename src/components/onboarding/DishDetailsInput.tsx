@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase, Database, WeightUnit, WEIGHT_UNITS } from '../../lib/supabase';
 import { ScannedDish } from '../../pages/RestaurantOnboarding';
-import { Check, Upload, X, ChevronRight, Plus, Sparkles, Loader2, AlertTriangle, Edit3, Clock } from 'lucide-react';
+import { Check, Upload, X, ChevronRight, ChevronDown, Plus, Sparkles, Loader2, AlertTriangle, Edit3, Clock, Repeat, Trash2 } from 'lucide-react';
 import { suggestIngredientsForDish, detectAllergens, SuggestedIngredient, COMMON_ALLERGENS } from '../../lib/openai';
 
 // Helper to format relative time
@@ -35,6 +35,13 @@ interface ExistingDishData {
   updatedAt: string;
 }
 
+interface SubstituteInput {
+  ingredientId?: string;
+  name: string;
+  allergens: string[];
+  isNew: boolean;
+}
+
 interface SelectedIngredient {
   ingredientId?: string; // If using existing ingredient
   name: string;
@@ -42,6 +49,9 @@ interface SelectedIngredient {
   amountUnit: WeightUnit | null;
   allergens: string[];
   isNew: boolean; // True if this is a new ingredient to be created
+  isRemovable: boolean;
+  isSubstitutable: boolean;
+  substitutes: SubstituteInput[];
 }
 
 interface DishForm {
@@ -72,6 +82,11 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
   const [existingDishData, setExistingDishData] = useState<Record<string, ExistingDishData>>({});
   const [loadingExistingDishes, setLoadingExistingDishes] = useState(true);
   const [customAllergenInput, setCustomAllergenInput] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [expandedIngredientIndex, setExpandedIngredientIndex] = useState<number | null>(null);
+  const [substituteSearchQuery, setSubstituteSearchQuery] = useState('');
+  const [newSubstituteName, setNewSubstituteName] = useState('');
+  const [detectingSubstituteAllergens, setDetectingSubstituteAllergens] = useState(false);
 
   const currentDish = currentDishIndex !== null ? dishes[currentDishIndex] : null;
   const currentForm = currentDish
@@ -151,25 +166,50 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
         );
 
         if (matchingDish) {
-          // Fetch ingredients for this menu item
+          // Fetch ingredients for this menu item with substitutes
           const { data: menuItemIngredients } = await supabase
             .from('menu_item_ingredients')
             .select('*, ingredient:ingredients(*)')
             .eq('menu_item_id', item.id);
 
+          // Fetch substitutes for all menu_item_ingredients
+          const miiIds = (menuItemIngredients || []).map((mii: { id: string }) => mii.id);
+          const { data: substitutesData } = miiIds.length > 0 ? await supabase
+            .from('ingredient_substitutes')
+            .select('*, substitute:ingredients(*)')
+            .in('menu_item_ingredient_id', miiIds) : { data: [] };
+
           const ingredients: SelectedIngredient[] = (menuItemIngredients || []).map((mii: {
+            id: string;
             ingredient_id: string;
             amount_value: number | null;
             amount_unit: WeightUnit | null;
+            is_removable: boolean;
+            is_substitutable: boolean;
             ingredient: Ingredient;
-          }) => ({
-            ingredientId: mii.ingredient_id,
-            name: mii.ingredient?.name || '',
-            amountValue: mii.amount_value,
-            amountUnit: mii.amount_unit,
-            allergens: mii.ingredient?.contains_allergens || [],
-            isNew: false,
-          }));
+          }) => {
+            // Find substitutes for this menu_item_ingredient
+            const subs = (substitutesData || [])
+              .filter((s: { menu_item_ingredient_id: string }) => s.menu_item_ingredient_id === mii.id)
+              .map((s: { substitute_ingredient_id: string; substitute: Ingredient }) => ({
+                ingredientId: s.substitute_ingredient_id,
+                name: s.substitute?.name || '',
+                allergens: s.substitute?.contains_allergens || [],
+                isNew: false,
+              }));
+
+            return {
+              ingredientId: mii.ingredient_id,
+              name: mii.ingredient?.name || '',
+              amountValue: mii.amount_value,
+              amountUnit: mii.amount_unit,
+              allergens: mii.ingredient?.contains_allergens || [],
+              isNew: false,
+              isRemovable: mii.is_removable || false,
+              isSubstitutable: mii.is_substitutable || false,
+              substitutes: subs,
+            };
+          });
 
           existingData[matchingDish.id] = {
             menuItemId: item.id,
@@ -276,6 +316,11 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
   const updateIngredientAmount = (index: number, value: number | null, unit: WeightUnit | null) => {
     if (!currentDish) return;
 
+    // Clear validation error when user updates an amount
+    if (validationError) {
+      setValidationError(null);
+    }
+
     setDishForms((prev) => ({
       ...prev,
       [currentDish.id]: {
@@ -337,37 +382,102 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       amountUnit: 'g',
       allergens: ingredient.contains_allergens,
       isNew: false,
+      isRemovable: false,
+      isSubstitutable: false,
+      substitutes: [],
     });
     setSearchQuery('');
   };
 
   const handleAddSuggestedIngredient = (suggestion: SuggestedIngredient) => {
+    // If suggestion has an existing ID, use the allergens from our local state
+    // (which may have been updated with custom allergens)
+    let allergens = suggestion.allergens;
+    if (suggestion.existingId) {
+      const existingIng = existingIngredients.find(ing => ing.id === suggestion.existingId);
+      if (existingIng) {
+        allergens = existingIng.contains_allergens;
+      }
+    } else {
+      // Check if ingredient exists by name (case-insensitive)
+      const existingByName = existingIngredients.find(
+        ing => ing.name.toLowerCase() === suggestion.name.toLowerCase()
+      );
+      if (existingByName) {
+        addIngredient({
+          ingredientId: existingByName.id,
+          name: existingByName.name,
+          amountValue: null,
+          amountUnit: 'g',
+          allergens: existingByName.contains_allergens,
+          isNew: false,
+          isRemovable: false,
+          isSubstitutable: false,
+          substitutes: [],
+        });
+        return;
+      }
+    }
+
     addIngredient({
       ingredientId: suggestion.existingId,
       name: suggestion.name,
       amountValue: null,
       amountUnit: 'g',
-      allergens: suggestion.allergens,
+      allergens,
       isNew: !suggestion.existingId,
+      isRemovable: false,
+      isSubstitutable: false,
+      substitutes: [],
     });
   };
 
   const handleAddNewIngredient = async () => {
     if (!newIngredientName.trim() || !currentDish) return;
 
+    const trimmedName = newIngredientName.trim();
+
+    // Check if this ingredient already exists in our database (case-insensitive)
+    const existingIngredient = existingIngredients.find(
+      ing => ing.name.toLowerCase() === trimmedName.toLowerCase()
+    );
+
+    if (existingIngredient) {
+      // Use existing ingredient with its saved allergens
+      const amountVal = newIngredientAmountValue ? parseFloat(newIngredientAmountValue) : null;
+      addIngredient({
+        ingredientId: existingIngredient.id,
+        name: existingIngredient.name,
+        amountValue: amountVal,
+        amountUnit: newIngredientAmountUnit,
+        allergens: existingIngredient.contains_allergens,
+        isNew: false,
+        isRemovable: false,
+        isSubstitutable: false,
+        substitutes: [],
+      });
+      setNewIngredientName('');
+      setNewIngredientAmountValue('');
+      setNewIngredientAmountUnit('g');
+      return;
+    }
+
     setDetectingAllergens(true);
     try {
       // Detect allergens for the new ingredient
-      const allergens = await detectAllergens(newIngredientName);
+      const allergens = await detectAllergens(trimmedName);
 
       const amountVal = newIngredientAmountValue ? parseFloat(newIngredientAmountValue) : null;
 
       addIngredient({
-        name: newIngredientName.trim(),
+        name: trimmedName,
         amountValue: amountVal,
         amountUnit: newIngredientAmountUnit,
         allergens,
         isNew: true,
+        isRemovable: false,
+        isSubstitutable: false,
+        substitutes: [],
       });
 
       setNewIngredientName('');
@@ -378,11 +488,14 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       // Add without allergens if detection fails
       const amountVal = newIngredientAmountValue ? parseFloat(newIngredientAmountValue) : null;
       addIngredient({
-        name: newIngredientName.trim(),
+        name: trimmedName,
         amountValue: amountVal,
         amountUnit: newIngredientAmountUnit,
         allergens: [],
         isNew: true,
+        isRemovable: false,
+        isSubstitutable: false,
+        substitutes: [],
       });
       setNewIngredientName('');
       setNewIngredientAmountValue('');
@@ -392,9 +505,135 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     }
   };
 
+  const toggleIngredientRemovable = (index: number) => {
+    if (!currentDish) return;
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id],
+        ingredients: prev[currentDish.id]?.ingredients.map((ing, i) =>
+          i === index ? { ...ing, isRemovable: !ing.isRemovable } : ing
+        ) || [],
+      },
+    }));
+  };
+
+  const toggleIngredientSubstitutable = (index: number) => {
+    if (!currentDish) return;
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id],
+        ingredients: prev[currentDish.id]?.ingredients.map((ing, i) =>
+          i === index ? { ...ing, isSubstitutable: !ing.isSubstitutable } : ing
+        ) || [],
+      },
+    }));
+  };
+
+  const addSubstituteToIngredient = (ingredientIndex: number, substitute: SubstituteInput) => {
+    if (!currentDish || !currentForm) return;
+
+    const ingredient = currentForm.ingredients[ingredientIndex];
+    // Check if already added
+    if (ingredient.substitutes.some(s => s.name.toLowerCase() === substitute.name.toLowerCase())) {
+      return;
+    }
+
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id],
+        ingredients: prev[currentDish.id]?.ingredients.map((ing, i) =>
+          i === ingredientIndex
+            ? { ...ing, substitutes: [...ing.substitutes, substitute] }
+            : ing
+        ) || [],
+      },
+    }));
+    setSubstituteSearchQuery('');
+    setNewSubstituteName('');
+  };
+
+  const removeSubstituteFromIngredient = (ingredientIndex: number, substituteIndex: number) => {
+    if (!currentDish) return;
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id],
+        ingredients: prev[currentDish.id]?.ingredients.map((ing, i) =>
+          i === ingredientIndex
+            ? { ...ing, substitutes: ing.substitutes.filter((_, si) => si !== substituteIndex) }
+            : ing
+        ) || [],
+      },
+    }));
+  };
+
+  const handleAddExistingSubstitute = (ingredientIndex: number, ingredient: Ingredient) => {
+    addSubstituteToIngredient(ingredientIndex, {
+      ingredientId: ingredient.id,
+      name: ingredient.name,
+      allergens: ingredient.contains_allergens,
+      isNew: false,
+    });
+  };
+
+  const handleAddNewSubstitute = async (ingredientIndex: number) => {
+    if (!newSubstituteName.trim()) return;
+
+    const trimmedName = newSubstituteName.trim();
+
+    // Check if this ingredient already exists
+    const existingIngredient = existingIngredients.find(
+      ing => ing.name.toLowerCase() === trimmedName.toLowerCase()
+    );
+
+    if (existingIngredient) {
+      addSubstituteToIngredient(ingredientIndex, {
+        ingredientId: existingIngredient.id,
+        name: existingIngredient.name,
+        allergens: existingIngredient.contains_allergens,
+        isNew: false,
+      });
+      return;
+    }
+
+    setDetectingSubstituteAllergens(true);
+    try {
+      const allergens = await detectAllergens(trimmedName);
+      addSubstituteToIngredient(ingredientIndex, {
+        name: trimmedName,
+        allergens,
+        isNew: true,
+      });
+    } catch (err) {
+      console.error('Error detecting allergens for substitute:', err);
+      addSubstituteToIngredient(ingredientIndex, {
+        name: trimmedName,
+        allergens: [],
+        isNew: true,
+      });
+    } finally {
+      setDetectingSubstituteAllergens(false);
+    }
+  };
+
   const handleSaveDish = async () => {
     if (!currentDish || !currentForm) return;
 
+    // Validate that all ingredients have amounts
+    const ingredientsWithoutAmount = currentForm.ingredients.filter(
+      ing => ing.amountValue === null || ing.amountValue === undefined || ing.amountValue <= 0
+    );
+
+    if (ingredientsWithoutAmount.length > 0) {
+      const names = ingredientsWithoutAmount.map(ing => ing.name).join(', ');
+      setValidationError(`Please enter an amount for: ${names}`);
+      return;
+    }
+
+    setValidationError(null);
     setSaving(true);
 
     try {
@@ -516,12 +755,63 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
 
         // Create menu_item_ingredient relationship
         if (ingredientId) {
-          await supabase.from('menu_item_ingredients').insert({
+          const { data: miiData } = await supabase.from('menu_item_ingredients').insert({
             menu_item_id: menuItemId,
             ingredient_id: ingredientId,
             amount_value: ing.amountValue,
             amount_unit: ing.amountUnit,
-          });
+            is_removable: ing.isRemovable,
+            is_substitutable: ing.isSubstitutable,
+          }).select('id').single();
+
+          // Save substitutes if any
+          if (miiData && ing.isSubstitutable && ing.substitutes.length > 0) {
+            for (const sub of ing.substitutes) {
+              let subIngredientId = sub.ingredientId;
+
+              // Create new substitute ingredient if needed
+              if (sub.isNew && !subIngredientId) {
+                const { data: newSubIng, error: subIngError } = await supabase
+                  .from('ingredients')
+                  .insert({
+                    restaurant_id: restaurantId,
+                    name: sub.name,
+                    contains_allergens: sub.allergens,
+                  })
+                  .select('id')
+                  .single();
+
+                if (subIngError) {
+                  if (subIngError.code === '23505') {
+                    const { data: existingSubIng } = await supabase
+                      .from('ingredients')
+                      .select('id')
+                      .eq('restaurant_id', restaurantId)
+                      .eq('name', sub.name)
+                      .single();
+                    subIngredientId = existingSubIng?.id;
+                  }
+                } else {
+                  subIngredientId = newSubIng.id;
+                  setExistingIngredients(prev => [...prev, {
+                    id: newSubIng.id,
+                    restaurant_id: restaurantId,
+                    name: sub.name,
+                    contains_allergens: sub.allergens,
+                    created_at: new Date().toISOString(),
+                  }]);
+                }
+              }
+
+              // Create substitute relationship
+              if (subIngredientId) {
+                await supabase.from('ingredient_substitutes').insert({
+                  menu_item_ingredient_id: miiData.id,
+                  substitute_ingredient_id: subIngredientId,
+                });
+              }
+            }
+          }
         }
       }
 
@@ -794,85 +1084,109 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
 
               {/* Selected Ingredients */}
               {currentForm && currentForm.ingredients.length > 0 && (
-                <div className="space-y-2 mb-4">
-                  {currentForm.ingredients.map((ing, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200 relative"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-slate-900 truncate">{ing.name}</span>
-                          {ing.isNew && (
-                            <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded flex-shrink-0">new</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          {ing.allergens.length > 0 ? (
-                            <div className="flex items-center gap-1">
-                              <AlertTriangle className="w-3 h-3 text-amber-600 flex-shrink-0" />
-                              <span className="text-xs text-amber-700 truncate">
-                                {ing.allergens.join(', ')}
-                              </span>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-400">No allergens</span>
-                          )}
+                <div className="space-y-3 mb-4">
+                  {currentForm.ingredients.map((ing, index) => {
+                    const isExpanded = expandedIngredientIndex === index;
+                    const filteredSubstituteIngredients = existingIngredients.filter(
+                      existIng =>
+                        existIng.name.toLowerCase().includes(substituteSearchQuery.toLowerCase()) &&
+                        existIng.name.toLowerCase() !== ing.name.toLowerCase() &&
+                        !ing.substitutes.some(s => s.name.toLowerCase() === existIng.name.toLowerCase())
+                    );
+
+                    return (
+                      <div
+                        key={index}
+                        className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden"
+                      >
+                        {/* Main ingredient row */}
+                        <div className="p-3 flex items-center gap-3">
                           <button
-                            onClick={() => setEditingAllergenIndex(editingAllergenIndex === index ? null : index)}
-                            className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded transition-colors"
-                            title="Edit allergens"
+                            onClick={() => setExpandedIngredientIndex(isExpanded ? null : index)}
+                            className="p-1 text-slate-400 hover:text-slate-600 transition-colors"
                           >
-                            <Edit3 className="w-3 h-3" />
+                            <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-slate-900 truncate">{ing.name}</span>
+                              {ing.isNew && (
+                                <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded flex-shrink-0">new</span>
+                              )}
+                              {ing.isRemovable && (
+                                <span className="text-xs px-1.5 py-0.5 bg-green-100 text-green-700 rounded flex-shrink-0">removable</span>
+                              )}
+                              {ing.isSubstitutable && (
+                                <span className="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded flex-shrink-0">substitutable</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              {ing.allergens.length > 0 ? (
+                                <div className="flex items-center gap-1">
+                                  <AlertTriangle className="w-3 h-3 text-amber-600 flex-shrink-0" />
+                                  <span className="text-xs text-amber-700 truncate">
+                                    {ing.allergens.join(', ')}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-400">No allergens</span>
+                              )}
+                              <button
+                                onClick={() => setEditingAllergenIndex(editingAllergenIndex === index ? null : index)}
+                                className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded transition-colors"
+                                title="Edit allergens"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <input
+                              type="number"
+                              value={ing.amountValue ?? ''}
+                              onChange={(e) => updateIngredientAmount(
+                                index,
+                                e.target.value ? parseFloat(e.target.value) : null,
+                                ing.amountUnit
+                              )}
+                              placeholder="0"
+                              min="0"
+                              step="0.1"
+                              className="w-20 px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                            />
+                            <select
+                              value={ing.amountUnit || 'g'}
+                              onChange={(e) => updateIngredientAmount(
+                                index,
+                                ing.amountValue,
+                                e.target.value as WeightUnit
+                              )}
+                              className="px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent bg-white"
+                            >
+                              <optgroup label="Weight">
+                                {WEIGHT_UNITS.filter(u => u.category === 'weight').map(u => (
+                                  <option key={u.value} value={u.value}>{u.value}</option>
+                                ))}
+                              </optgroup>
+                              <optgroup label="Volume">
+                                {WEIGHT_UNITS.filter(u => u.category === 'volume').map(u => (
+                                  <option key={u.value} value={u.value}>{u.value}</option>
+                                ))}
+                              </optgroup>
+                              <optgroup label="Count">
+                                {WEIGHT_UNITS.filter(u => u.category === 'count').map(u => (
+                                  <option key={u.value} value={u.value}>{u.value}</option>
+                                ))}
+                              </optgroup>
+                            </select>
+                          </div>
+                          <button
+                            onClick={() => removeIngredient(index)}
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                          >
+                            <X className="w-4 h-4" />
                           </button>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <input
-                          type="number"
-                          value={ing.amountValue ?? ''}
-                          onChange={(e) => updateIngredientAmount(
-                            index,
-                            e.target.value ? parseFloat(e.target.value) : null,
-                            ing.amountUnit
-                          )}
-                          placeholder="0"
-                          min="0"
-                          step="0.1"
-                          className="w-20 px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                        />
-                        <select
-                          value={ing.amountUnit || 'g'}
-                          onChange={(e) => updateIngredientAmount(
-                            index,
-                            ing.amountValue,
-                            e.target.value as WeightUnit
-                          )}
-                          className="px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent bg-white"
-                        >
-                          <optgroup label="Weight">
-                            {WEIGHT_UNITS.filter(u => u.category === 'weight').map(u => (
-                              <option key={u.value} value={u.value}>{u.value}</option>
-                            ))}
-                          </optgroup>
-                          <optgroup label="Volume">
-                            {WEIGHT_UNITS.filter(u => u.category === 'volume').map(u => (
-                              <option key={u.value} value={u.value}>{u.value}</option>
-                            ))}
-                          </optgroup>
-                          <optgroup label="Count">
-                            {WEIGHT_UNITS.filter(u => u.category === 'count').map(u => (
-                              <option key={u.value} value={u.value}>{u.value}</option>
-                            ))}
-                          </optgroup>
-                        </select>
-                      </div>
-                      <button
-                        onClick={() => removeIngredient(index)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
 
                       {/* Allergen Editor Dropdown */}
                       {editingAllergenIndex === index && (
@@ -963,8 +1277,130 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                           </div>
                         </div>
                       )}
-                    </div>
-                  ))}
+
+                        {/* Expanded Modification Settings */}
+                        {isExpanded && (
+                          <div className="border-t border-slate-200 bg-white p-4 space-y-4">
+                            {/* Modification Toggles */}
+                            <div className="flex flex-wrap gap-4">
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={ing.isRemovable}
+                                  onChange={() => toggleIngredientRemovable(index)}
+                                  className="w-4 h-4 rounded border-slate-300 text-green-600 focus:ring-green-500"
+                                />
+                                <span className="text-sm text-slate-700">Can be removed</span>
+                              </label>
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={ing.isSubstitutable}
+                                  onChange={() => toggleIngredientSubstitutable(index)}
+                                  className="w-4 h-4 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                                />
+                                <span className="text-sm text-slate-700">Can be substituted</span>
+                              </label>
+                            </div>
+
+                            {/* Substitutes Section (only if substitutable) */}
+                            {ing.isSubstitutable && (
+                              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                                <div className="flex items-center gap-2 mb-3">
+                                  <Repeat className="w-4 h-4 text-purple-600" />
+                                  <span className="text-sm font-semibold text-purple-900">Substitutes</span>
+                                </div>
+
+                                {/* Existing Substitutes */}
+                                {ing.substitutes.length > 0 && (
+                                  <div className="space-y-2 mb-3">
+                                    {ing.substitutes.map((sub, subIdx) => (
+                                      <div
+                                        key={subIdx}
+                                        className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-purple-200"
+                                      >
+                                        <div>
+                                          <span className="text-sm font-medium text-slate-900">{sub.name}</span>
+                                          {sub.isNew && (
+                                            <span className="ml-2 text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">new</span>
+                                          )}
+                                          {sub.allergens.length > 0 && (
+                                            <div className="flex items-center gap-1 mt-0.5">
+                                              <AlertTriangle className="w-3 h-3 text-amber-600" />
+                                              <span className="text-xs text-amber-700">{sub.allergens.join(', ')}</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                        <button
+                                          onClick={() => removeSubstituteFromIngredient(index, subIdx)}
+                                          className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Search existing ingredients for substitutes */}
+                                <div className="mb-2">
+                                  <input
+                                    type="text"
+                                    value={substituteSearchQuery}
+                                    onChange={(e) => setSubstituteSearchQuery(e.target.value)}
+                                    placeholder="Search ingredients..."
+                                    className="w-full px-3 py-2 text-sm border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                  />
+                                  {substituteSearchQuery && filteredSubstituteIngredients.length > 0 && (
+                                    <div className="mt-1 max-h-32 overflow-y-auto border border-purple-200 rounded-lg bg-white">
+                                      {filteredSubstituteIngredients.slice(0, 5).map((subIng) => (
+                                        <button
+                                          key={subIng.id}
+                                          onClick={() => handleAddExistingSubstitute(index, subIng)}
+                                          className="w-full px-3 py-2 text-left text-sm hover:bg-purple-50 flex items-center justify-between border-b border-purple-100 last:border-0"
+                                        >
+                                          <span className="font-medium text-slate-900">{subIng.name}</span>
+                                          {subIng.contains_allergens.length > 0 && (
+                                            <span className="text-xs text-amber-600">{subIng.contains_allergens.join(', ')}</span>
+                                          )}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Add new substitute */}
+                                <div className="flex gap-2">
+                                  <input
+                                    type="text"
+                                    value={newSubstituteName}
+                                    onChange={(e) => setNewSubstituteName(e.target.value)}
+                                    placeholder="Or add new substitute..."
+                                    className="flex-1 px-3 py-2 text-sm border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                  />
+                                  <button
+                                    onClick={() => handleAddNewSubstitute(index)}
+                                    disabled={!newSubstituteName.trim() || detectingSubstituteAllergens}
+                                    className="px-3 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center gap-1"
+                                  >
+                                    {detectingSubstituteAllergens ? (
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                      <Plus className="w-4 h-4" />
+                                    )}
+                                    Add
+                                  </button>
+                                </div>
+                                <p className="text-xs text-purple-600 mt-2">
+                                  AI will detect allergens for new substitutes
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -1124,6 +1560,13 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                 </label>
               )}
             </div>
+
+            {validationError && (
+              <div className="flex items-start gap-2 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{validationError}</p>
+              </div>
+            )}
 
             <button
               onClick={handleSaveDish}
