@@ -20,8 +20,8 @@ export interface SafetyAnalysis {
   crossContactRisks?: string[];
 }
 
-// Extended MenuItem type to include description_allergens
-interface MenuItemWithDescriptionAllergens extends MenuItem {
+// Extended MenuItem type to include optional description_allergens
+interface MenuItemWithDescriptionAllergens extends Omit<MenuItem, 'description_allergens'> {
   description_allergens?: string[];
 }
 
@@ -132,12 +132,6 @@ export function analyzeDishSafety(
 
   // Combine removable and substitutable allergens for "safe with modifications" check
   const modifiableAllergens = new Set([...removableAllergens, ...substitutableAllergens]);
-
-  // Description allergens are not modifiable (can't remove what's described in the dish)
-  const allNonModifiable = new Set([
-    ...Array.from(foundAllergens).filter(a => !modifiableAllergens.has(a)),
-    ...descriptionAllergenMatches
-  ]);
 
   if (foundAllergens.size > 0 && modifiableAllergens.size === foundAllergens.size && crossContactRisks.length === 0 && descriptionAllergenMatches.size === 0) {
     reasons.push(`Contains: ${Array.from(foundAllergens).join(', ')}`);

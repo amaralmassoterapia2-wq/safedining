@@ -3,7 +3,7 @@ import { supabase, Database } from '../../lib/supabase';
 import MenuItemForm from './MenuItemForm';
 import MenuDigitization from '../onboarding/MenuDigitization';
 import DishDetailsInput from '../onboarding/DishDetailsInput';
-import { Plus, Edit2, Trash2, Eye, EyeOff, Camera, Upload, ArrowLeft } from 'lucide-react';
+import { Plus, Edit2, Trash2, Eye, EyeOff, Camera, ArrowLeft } from 'lucide-react';
 import { ScannedDish } from '../../pages/RestaurantOnboarding';
 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
@@ -160,7 +160,7 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
         </div>
         <DishDetailsInput
           restaurantId={restaurantId}
-          scannedDishes={scannedDishes}
+          dishes={scannedDishes}
           onComplete={handleDetailsComplete}
         />
       </div>

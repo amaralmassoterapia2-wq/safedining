@@ -20,8 +20,20 @@ interface IngredientWithModifications extends Ingredient {
   substitutes: SubstituteInfo[];
 }
 
+// Extended menu item with optional nutrition and photo fields
+interface MenuItemWithExtras extends MenuItem {
+  calories?: number | null;
+  protein_grams?: number | null;
+  carbs_grams?: number | null;
+  fat_grams?: number | null;
+  fiber_grams?: number | null;
+  sugar_grams?: number | null;
+  sodium_mg?: number | null;
+  photo_url?: string | null;
+}
+
 interface DishDetailProps {
-  dish: MenuItem & { ingredients: IngredientWithModifications[]; cookingSteps: CookingStep[] };
+  dish: MenuItemWithExtras & { ingredients: IngredientWithModifications[]; cookingSteps: CookingStep[] };
   customerAllergens: string[];
   restaurantId: string;
 }

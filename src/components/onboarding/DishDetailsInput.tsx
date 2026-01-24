@@ -19,7 +19,6 @@ function formatTimeAgo(dateString: string): string {
 }
 
 type Ingredient = Database['public']['Tables']['ingredients']['Row'];
-type MenuItem = Database['public']['Tables']['menu_items']['Row'];
 
 interface DishDetailsInputProps {
   restaurantId: string;

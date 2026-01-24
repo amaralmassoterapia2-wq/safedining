@@ -197,8 +197,8 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
             <div className="flex gap-2 overflow-x-auto">
               {categories.map((category) => (
                 <button
-                  key={category}
-                  onClick={() => setFilterCategory(category)}
+                  key={category ?? 'null'}
+                  onClick={() => setFilterCategory(category ?? 'all')}
                   className={`px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap transition-colors ${
                     filterCategory === category
                       ? 'bg-slate-900 text-white'

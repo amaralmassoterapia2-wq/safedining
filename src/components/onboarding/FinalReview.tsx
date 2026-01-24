@@ -1,12 +1,11 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase, Database, WeightUnit, formatAmount } from '../../lib/supabase';
-import { CheckCircle2, Download, QrCode as QrCodeIcon, ExternalLink, ArrowLeft, AlertTriangle, Loader2, Plus, X, Edit3, ChevronDown, ChevronUp, Repeat, Trash2 } from 'lucide-react';
+import { CheckCircle2, Download, QrCode as QrCodeIcon, ExternalLink, ArrowLeft, AlertTriangle, Loader2, Plus, X, ChevronDown, ChevronUp, Repeat, Trash2 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { analyzeMenuItemAllergens, MenuItemAllergenAnalysis, COMMON_ALLERGENS } from '../../lib/openai';
 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
 type Ingredient = Database['public']['Tables']['ingredients']['Row'];
-type MenuItemIngredient = Database['public']['Tables']['menu_item_ingredients']['Row'];
 type Restaurant = Database['public']['Tables']['restaurants']['Row'];
 
 interface SubstituteIngredient {
@@ -26,6 +25,7 @@ interface IngredientWithAmount extends Ingredient {
 interface MenuItemWithIngredients extends MenuItem {
   ingredients: IngredientWithAmount[];
   allergenAnalysis?: MenuItemAllergenAnalysis;
+  photo_url?: string | null;
 }
 
 interface FinalReviewProps {
@@ -90,7 +90,7 @@ export default function FinalReview({ restaurantId, onBack }: FinalReviewProps) 
               .eq('menu_item_id', item.id);
 
             // Get all menu_item_ingredient IDs to fetch substitutes
-            const miiIds = (menuItemIngredients || []).map((mii: any) => mii.id);
+            const miiIds = (menuItemIngredients || []).map((mii: { id: string }) => mii.id);
 
             // Fetch substitutes for all menu_item_ingredients
             const { data: substitutesData } = miiIds.length > 0 ? await supabase
@@ -98,11 +98,11 @@ export default function FinalReview({ restaurantId, onBack }: FinalReviewProps) 
               .select('*, substitute:ingredients(*)')
               .in('menu_item_ingredient_id', miiIds) : { data: [] };
 
-            const ingredients: IngredientWithAmount[] = (menuItemIngredients || []).map((mii: any) => {
+            const ingredients: IngredientWithAmount[] = (menuItemIngredients || []).map((mii: { id: string; amount_value: number | null; amount_unit: WeightUnit | null; is_removable?: boolean; is_substitutable?: boolean; ingredient: Ingredient }) => {
               // Find substitutes for this menu_item_ingredient
               const subs = (substitutesData || [])
-                .filter((s: any) => s.menu_item_ingredient_id === mii.id)
-                .map((s: any) => ({
+                .filter((s: { menu_item_ingredient_id: string }) => s.menu_item_ingredient_id === mii.id)
+                .map((s: { substitute_ingredient_id: string; substitute?: { name?: string; contains_allergens?: string[] } }) => ({
                   id: s.substitute_ingredient_id,
                   name: s.substitute?.name || '',
                   allergens: s.substitute?.contains_allergens || [],
@@ -133,7 +133,7 @@ export default function FinalReview({ restaurantId, onBack }: FinalReviewProps) 
           itemsWithIngredients.map(async (item) => {
             const analysis = await analyzeMenuItemAllergens(
               item.name,
-              item.ingredients.map(ing => ({
+              item.ingredients.map((ing: IngredientWithAmount) => ({
                 name: ing.name,
                 allergens: ing.contains_allergens,
               })),
@@ -465,7 +465,7 @@ export default function FinalReview({ restaurantId, onBack }: FinalReviewProps) 
                                   {ing.substitutes.length > 0 && (
                                     <>
                                       <span className="text-xs text-slate-400">→</span>
-                                      {ing.substitutes.map((sub, subIdx) => (
+                                      {ing.substitutes.map((sub) => (
                                         <span
                                           key={sub.id}
                                           className="px-2 py-0.5 bg-slate-100 text-slate-700 text-xs rounded-full"
