@@ -58,6 +58,7 @@ export default function InteractiveMenuPhoto({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cameraStarted, setCameraStarted] = useState(false);
 
   // Load all menu items from database
   useEffect(() => {
@@ -128,10 +129,12 @@ export default function InteractiveMenuPhoto({
 
   const startCamera = async () => {
     try {
+      setError(null);
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment' },
       });
       setStream(mediaStream);
+      setCameraStarted(true);
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
@@ -234,8 +237,14 @@ export default function InteractiveMenuPhoto({
   const retakePhoto = () => {
     setCapturedImage(null);
     setMatchedItems([]);
+    setError(null);
+    setCameraStarted(false);
     setStep('capture');
-    startCamera();
+    // Stop current stream if any
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
   };
 
   const getSafetyColor = (status: MatchedItem['safetyStatus']) => {
@@ -264,12 +273,7 @@ export default function InteractiveMenuPhoto({
     }
   };
 
-  // Start camera when component mounts
-  useEffect(() => {
-    if (step === 'capture' && !capturedImage) {
-      startCamera();
-    }
-  }, [step]);
+  // Don't auto-start camera - wait for user action
 
   const containerClass = embedded
     ? "bg-slate-900 flex flex-col min-h-[calc(100vh-180px)]"
@@ -317,49 +321,77 @@ export default function InteractiveMenuPhoto({
         {step === 'capture' && (
           <div className="h-full flex flex-col">
             {error && (
-              <div className="bg-red-500/20 border border-red-500 text-red-200 px-4 py-2 text-sm">
+              <div className="bg-red-500/20 border border-red-500 text-red-200 px-4 py-3 text-sm m-4 rounded-lg">
                 {error}
               </div>
             )}
-            <div className="flex-1 relative bg-black">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                className="absolute inset-0 w-full h-full object-cover"
-              />
-              <canvas ref={canvasRef} className="hidden" />
 
-              {/* Viewfinder overlay */}
-              <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute inset-8 border-2 border-white/30 rounded-xl" />
-                <div className="absolute top-1/2 left-8 right-8 h-px bg-white/20" />
+            {!cameraStarted ? (
+              // Initial state - show options to start camera or upload
+              <div className="flex-1 flex flex-col items-center justify-center p-6">
+                <div className="w-24 h-24 bg-slate-800 rounded-full flex items-center justify-center mb-6">
+                  <Camera className="w-12 h-12 text-slate-400" />
+                </div>
+                <h2 className="text-xl font-bold text-white mb-2">Scan Your Menu</h2>
+                <p className="text-slate-400 text-center mb-8 max-w-xs">
+                  Take a photo of the physical menu to see allergen information for each dish
+                </p>
+
+                <div className="w-full max-w-sm space-y-3">
+                  <button
+                    onClick={startCamera}
+                    className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 shadow-lg"
+                  >
+                    <Camera className="w-6 h-6" />
+                    Open Camera
+                  </button>
+
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full bg-slate-700 text-slate-200 py-3 rounded-xl font-medium flex items-center justify-center gap-2"
+                  >
+                    Upload from Gallery
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : (
+              // Camera is running - show viewfinder
+              <>
+                <div className="flex-1 relative bg-black">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    className="absolute inset-0 w-full h-full object-cover"
+                  />
+                  <canvas ref={canvasRef} className="hidden" />
 
-            <div className="p-4 bg-slate-800 space-y-3">
-              <button
-                onClick={capturePhoto}
-                className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 shadow-lg"
-              >
-                <Camera className="w-6 h-6" />
-                Capture Menu Photo
-              </button>
+                  {/* Viewfinder overlay */}
+                  <div className="absolute inset-0 pointer-events-none">
+                    <div className="absolute inset-8 border-2 border-white/30 rounded-xl" />
+                    <div className="absolute top-1/2 left-8 right-8 h-px bg-white/20" />
+                  </div>
+                </div>
 
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full bg-slate-700 text-slate-200 py-3 rounded-xl font-medium flex items-center justify-center gap-2"
-              >
-                Upload from Gallery
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-            </div>
+                <div className="p-4 bg-slate-800">
+                  <button
+                    onClick={capturePhoto}
+                    className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 shadow-lg"
+                  >
+                    <Camera className="w-6 h-6" />
+                    Take Photo
+                  </button>
+                </div>
+              </>
+            )}
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
           </div>
         )}
 

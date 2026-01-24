@@ -283,30 +283,6 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
         </div>
       </div>
 
-      {/* Allergen Alert Banner */}
-      {customerAllergens.length > 0 && (
-        <div className="max-w-4xl mx-auto px-4 pt-4">
-          <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-emerald-500/20 rounded-lg">
-                <Shield className="w-5 h-5 text-emerald-400" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm text-slate-300">
-                  Filtering for: <span className="font-medium text-white">{customerAllergens.join(', ')}</span>
-                </p>
-              </div>
-              <button
-                onClick={onEditProfile}
-                className="text-emerald-400 text-sm font-medium hover:text-emerald-300"
-              >
-                Edit
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Tab Content */}
       {activeTab === 'scan' ? (
         <div className="flex-1">
@@ -322,6 +298,30 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
         </div>
       ) : (
         <>
+          {/* Allergen Alert Banner - only on list tab */}
+          {customerAllergens.length > 0 && (
+            <div className="max-w-4xl mx-auto px-4 pt-4">
+              <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-emerald-500/20 rounded-lg">
+                    <Shield className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm text-slate-300">
+                      Filtering for: <span className="font-medium text-white">{customerAllergens.join(', ')}</span>
+                    </p>
+                  </div>
+                  <button
+                    onClick={onEditProfile}
+                    className="text-emerald-400 text-sm font-medium hover:text-emerald-300"
+                  >
+                    Edit
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Category Filter */}
           {categories.length > 2 && (
             <div className="bg-slate-800/30 border-b border-slate-700/50">
