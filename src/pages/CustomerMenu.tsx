@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { supabase, Database } from '../lib/supabase';
 import { getOrCreateSessionId } from '../lib/customerSession';
-import { Settings, Shield, ChevronRight, AlertCircle, CheckCircle, XCircle, Camera } from 'lucide-react';
+import { Settings, Shield, ChevronRight, AlertCircle, CheckCircle, XCircle, Camera, List } from 'lucide-react';
 import BottomSheet from '../components/common/BottomSheet';
 import DishDetail from '../components/customer/DishDetail';
 import InteractiveMenuPhoto from '../components/customer/InteractiveMenuPhoto';
 import { analyzeDishSafety } from '../lib/safetyAnalysis';
+
+type CustomerTab = 'scan' | 'list';
 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
 type Ingredient = Database['public']['Tables']['ingredients']['Row'];
@@ -41,7 +43,8 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
   const [loading, setLoading] = useState(true);
   const [selectedDish, setSelectedDish] = useState<MenuItemWithData | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>('all');
-  const [showMenuScanner, setShowMenuScanner] = useState(false);
+  const [activeTab, setActiveTab] = useState<CustomerTab>('scan');
+  const [hasScannedMenu, setHasScannedMenu] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -203,6 +206,16 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
     ? menuItems
     : menuItems.filter((item) => item.category === filterCategory);
 
+  const handleMenuScanned = () => {
+    setHasScannedMenu(true);
+  };
+
+  const handleSwitchToList = () => {
+    if (hasScannedMenu) {
+      setActiveTab('list');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       {/* Header */}
@@ -232,32 +245,47 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
         </div>
       </header>
 
-      {/* Category Filter */}
-      {categories.length > 2 && (
-        <div className="bg-slate-800/30 border-b border-slate-700/50">
-          <div className="max-w-4xl mx-auto px-4 py-3">
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-              {categories.map((category) => (
-                <button
-                  key={category ?? 'null'}
-                  onClick={() => setFilterCategory(category ?? 'all')}
-                  className={`px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap transition-all ${
-                    filterCategory === category
-                      ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg'
-                      : 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'
-                  }`}
-                >
-                  {category === 'all' ? 'All Items' : category}
-                </button>
-              ))}
-            </div>
+      {/* Tab Navigation */}
+      <div className="bg-slate-800/80 border-b border-slate-700">
+        <div className="max-w-4xl mx-auto px-4">
+          <div className="flex">
+            <button
+              onClick={() => setActiveTab('scan')}
+              className={`flex-1 py-4 px-4 flex items-center justify-center gap-2 font-medium text-sm transition-all border-b-2 ${
+                activeTab === 'scan'
+                  ? 'border-emerald-500 text-white bg-emerald-500/10'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Camera className="w-5 h-5" />
+              Scan Menu
+            </button>
+            <button
+              onClick={handleSwitchToList}
+              disabled={!hasScannedMenu}
+              className={`flex-1 py-4 px-4 flex items-center justify-center gap-2 font-medium text-sm transition-all border-b-2 ${
+                activeTab === 'list'
+                  ? 'border-emerald-500 text-white bg-emerald-500/10'
+                  : hasScannedMenu
+                    ? 'border-transparent text-slate-400 hover:text-slate-200'
+                    : 'border-transparent text-slate-600 cursor-not-allowed'
+              }`}
+            >
+              <List className="w-5 h-5" />
+              Full Menu
+              {!hasScannedMenu && (
+                <span className="text-xs bg-slate-700 px-2 py-0.5 rounded-full">
+                  Scan first
+                </span>
+              )}
+            </button>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Allergen Alert Banner */}
       {customerAllergens.length > 0 && (
-        <div className="max-w-4xl mx-auto px-4 pt-6">
+        <div className="max-w-4xl mx-auto px-4 pt-4">
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-emerald-500/20 rounded-lg">
@@ -279,75 +307,106 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
         </div>
       )}
 
-      {/* Menu Items */}
-      <main className="max-w-4xl mx-auto px-4 py-6">
-        {filteredItems.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xl">
-            <p className="text-slate-600">No menu items available</p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {Object.entries(
-              filteredItems.reduce((acc, item) => {
-                const cat = item.category || 'Other';
-                if (!acc[cat]) acc[cat] = [];
-                acc[cat].push(item);
-                return acc;
-              }, {} as Record<string, typeof filteredItems>)
-            ).map(([category, items]) => (
-              <div key={category} className="bg-white rounded-2xl shadow-xl overflow-hidden">
-                <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-5 py-3">
-                  <h2 className="font-bold text-white uppercase text-sm tracking-wide">{category}</h2>
-                </div>
-                <div className="divide-y divide-slate-100">
-                  {items.map((item) => {
-                    const safetyStatus = customerAllergens.length > 0 ? getDishSafetyStatus(item) : null;
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => setSelectedDish(item)}
-                        className="w-full p-5 hover:bg-slate-50 transition-colors text-left group"
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap mb-1">
-                              <h3 className="text-lg font-semibold text-slate-900">{item.name}</h3>
-                              {safetyStatus && getSafetyBadge(safetyStatus)}
-                            </div>
-                            {item.description && (
-                              <p className="text-sm text-slate-600 leading-relaxed line-clamp-2">{item.description}</p>
-                            )}
-                            {item.calories && (
-                              <p className="text-xs text-slate-400 mt-1">{item.calories} cal</p>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {item.price && (
-                              <span className="text-lg font-bold text-slate-900">
-                                ${Number(item.price).toFixed(2)}
-                              </span>
-                            )}
-                            <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-slate-600 transition-colors" />
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
+      {/* Tab Content */}
+      {activeTab === 'scan' ? (
+        <div className="flex-1">
+          <InteractiveMenuPhoto
+            restaurantId={restaurant.id}
+            customerAllergens={customerAllergens}
+            onClose={() => {
+              handleMenuScanned();
+              setActiveTab('list');
+            }}
+            embedded={true}
+          />
+        </div>
+      ) : (
+        <>
+          {/* Category Filter */}
+          {categories.length > 2 && (
+            <div className="bg-slate-800/30 border-b border-slate-700/50">
+              <div className="max-w-4xl mx-auto px-4 py-3">
+                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                  {categories.map((category) => (
+                    <button
+                      key={category ?? 'null'}
+                      onClick={() => setFilterCategory(category ?? 'all')}
+                      className={`px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap transition-all ${
+                        filterCategory === category
+                          ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg'
+                          : 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {category === 'all' ? 'All Items' : category}
+                    </button>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </main>
+            </div>
+          )}
 
-      {/* Floating Scan Menu Button */}
-      <button
-        onClick={() => setShowMenuScanner(true)}
-        className="fixed bottom-6 right-6 bg-gradient-to-r from-emerald-500 to-teal-600 text-white p-4 rounded-full shadow-xl hover:shadow-2xl transition-all hover:scale-105 z-20"
-        title="Scan physical menu"
-      >
-        <Camera className="w-6 h-6" />
-      </button>
+          {/* Menu Items */}
+          <main className="max-w-4xl mx-auto px-4 py-6">
+            {filteredItems.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xl">
+                <p className="text-slate-600">No menu items available</p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {Object.entries(
+                  filteredItems.reduce((acc, item) => {
+                    const cat = item.category || 'Other';
+                    if (!acc[cat]) acc[cat] = [];
+                    acc[cat].push(item);
+                    return acc;
+                  }, {} as Record<string, typeof filteredItems>)
+                ).map(([category, items]) => (
+                  <div key={category} className="bg-white rounded-2xl shadow-xl overflow-hidden">
+                    <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-5 py-3">
+                      <h2 className="font-bold text-white uppercase text-sm tracking-wide">{category}</h2>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {items.map((item) => {
+                        const safetyStatus = customerAllergens.length > 0 ? getDishSafetyStatus(item) : null;
+                        return (
+                          <button
+                            key={item.id}
+                            onClick={() => setSelectedDish(item)}
+                            className="w-full p-5 hover:bg-slate-50 transition-colors text-left group"
+                          >
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  <h3 className="text-lg font-semibold text-slate-900">{item.name}</h3>
+                                  {safetyStatus && getSafetyBadge(safetyStatus)}
+                                </div>
+                                {item.description && (
+                                  <p className="text-sm text-slate-600 leading-relaxed line-clamp-2">{item.description}</p>
+                                )}
+                                {item.calories && (
+                                  <p className="text-xs text-slate-400 mt-1">{item.calories} cal</p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {item.price && (
+                                  <span className="text-lg font-bold text-slate-900">
+                                    ${Number(item.price).toFixed(2)}
+                                  </span>
+                                )}
+                                <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-slate-600 transition-colors" />
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </main>
+        </>
+      )}
 
       <BottomSheet
         isOpen={!!selectedDish}
@@ -362,15 +421,6 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
           />
         )}
       </BottomSheet>
-
-      {/* Interactive Menu Photo Scanner */}
-      {showMenuScanner && (
-        <InteractiveMenuPhoto
-          restaurantId={restaurant.id}
-          customerAllergens={customerAllergens}
-          onClose={() => setShowMenuScanner(false)}
-        />
-      )}
     </div>
   );
 }

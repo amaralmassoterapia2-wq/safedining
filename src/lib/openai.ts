@@ -1505,8 +1505,14 @@ export async function analyzeMenuPhoto(
   imageBase64: string
 ): Promise<MenuPhotoAnalysisResult> {
   if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
-    return { detectedItems: [], totalItems: 0 };
+    console.error('OpenAI API key not configured for menu photo analysis');
+    throw new Error('OpenAI API key not configured. Please add VITE_OPENAI_API_KEY to your .env file.');
   }
+
+  // Ensure the image is in the correct data URL format
+  const imageUrl = imageBase64.startsWith('data:')
+    ? imageBase64
+    : `data:image/jpeg;base64,${imageBase64}`;
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -1520,30 +1526,32 @@ export async function analyzeMenuPhoto(
         messages: [
           {
             role: 'system',
-            content: `You are a menu OCR expert. Analyze the menu image and extract all dish/food item names you can see.
+            content: `You are a menu OCR expert. Your job is to read menu images and extract food/dish names.
 
-For each dish, provide:
-1. The dish name exactly as written on the menu
-2. An approximate bounding box position (as percentages of the image dimensions)
-3. A confidence score (0-100) for the detection
-4. The price if visible
+TASK: Look at this menu image and find ALL food items, dishes, and beverages listed.
 
-IMPORTANT:
-- Focus on dish/food item names, not section headers or restaurant info
-- The bounding box should be approximate - x,y is the top-left corner
-- Use percentages (0-100) for positions so they work at any image size
-- Include partial matches if you can read most of the dish name
-- Sort items roughly from top to bottom, left to right
+For EACH item found, provide:
+1. name: The dish/item name as written (e.g., "Caesar Salad", "Grilled Chicken", "Margherita Pizza")
+2. boundingBox: Approximate position as percentages (0-100) where x,y is top-left corner
+3. confidence: How sure you are this is a menu item (0-100)
+4. price: The price if visible (e.g., "$12.99")
 
-Return ONLY a JSON object with this structure:
+RULES:
+- Extract EVERY food/drink item you can see
+- Include appetizers, mains, desserts, drinks, sides - everything edible
+- Include items even if you can only partially read them
+- Ignore section headers like "APPETIZERS" or "MAIN COURSES" - only include actual dish names
+- Ignore restaurant name, addresses, hours
+- Approximate the bounding box - it doesn't need to be perfect
+- If the menu is handwritten, do your best to read it
+- If text is unclear, provide your best guess with lower confidence
+
+CRITICAL: You MUST find menu items. Even a simple menu has at least a few items. If you truly cannot read ANY text, say so, but try your best first.
+
+Return ONLY valid JSON:
 {
   "items": [
-    {
-      "name": "Dish Name",
-      "boundingBox": { "x": 10, "y": 20, "width": 30, "height": 5 },
-      "confidence": 95,
-      "price": "$12.99"
-    }
+    {"name": "Dish Name", "boundingBox": {"x": 10, "y": 20, "width": 30, "height": 5}, "confidence": 95, "price": "$12.99"}
   ]
 }`,
           },
@@ -1552,29 +1560,42 @@ Return ONLY a JSON object with this structure:
             content: [
               {
                 type: 'text',
-                text: 'Extract all dish names from this menu image with their approximate positions:',
+                text: 'Read this menu image and extract all dish/food item names. Find every food or drink item listed.',
               },
               {
                 type: 'image_url',
                 image_url: {
-                  url: imageBase64.startsWith('data:') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`,
+                  url: imageUrl,
+                  detail: 'high', // High detail for better text recognition
                 },
               },
             ],
           },
         ],
-        max_tokens: 2000,
-        temperature: 0.2,
+        max_tokens: 3000,
+        temperature: 0.1, // Low temperature for more consistent output
       }),
     });
 
     if (!response.ok) {
-      console.error('Failed to analyze menu photo:', response.status);
-      return { detectedItems: [], totalItems: 0 };
+      const errorData = await response.json().catch(() => ({}));
+      const errorMessage = errorData.error?.message || `API request failed with status ${response.status}`;
+      console.error('Failed to analyze menu photo:', errorMessage);
+
+      if (response.status === 401) {
+        throw new Error('Invalid OpenAI API key. Please check your VITE_OPENAI_API_KEY.');
+      }
+      if (response.status === 429) {
+        throw new Error('OpenAI rate limit exceeded. Please wait a moment and try again.');
+      }
+
+      throw new Error(errorMessage);
     }
 
     const data = await response.json();
     const content: string = data.choices[0]?.message?.content || '{}';
+
+    console.log('OpenAI menu analysis response:', content);
 
     // Parse JSON from response
     let jsonString = content;
@@ -1587,22 +1608,26 @@ Return ONLY a JSON object with this structure:
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
       if (parsed.items && Array.isArray(parsed.items)) {
-        const detectedItems: DetectedMenuItem[] = parsed.items.map((item: {
-          name?: string;
-          boundingBox?: { x?: number; y?: number; width?: number; height?: number };
-          confidence?: number;
-          price?: string;
-        }) => ({
-          name: String(item.name || ''),
-          boundingBox: {
-            x: typeof item.boundingBox?.x === 'number' ? item.boundingBox.x : 0,
-            y: typeof item.boundingBox?.y === 'number' ? item.boundingBox.y : 0,
-            width: typeof item.boundingBox?.width === 'number' ? item.boundingBox.width : 20,
-            height: typeof item.boundingBox?.height === 'number' ? item.boundingBox.height : 5,
-          },
-          confidence: typeof item.confidence === 'number' ? item.confidence : 50,
-          price: item.price,
-        }));
+        const detectedItems: DetectedMenuItem[] = parsed.items
+          .filter((item: { name?: string }) => item.name && String(item.name).trim().length > 0)
+          .map((item: {
+            name?: string;
+            boundingBox?: { x?: number; y?: number; width?: number; height?: number };
+            confidence?: number;
+            price?: string;
+          }, index: number) => ({
+            name: String(item.name || '').trim(),
+            boundingBox: {
+              x: typeof item.boundingBox?.x === 'number' ? item.boundingBox.x : 5 + (index % 2) * 45,
+              y: typeof item.boundingBox?.y === 'number' ? item.boundingBox.y : 10 + Math.floor(index / 2) * 8,
+              width: typeof item.boundingBox?.width === 'number' ? item.boundingBox.width : 40,
+              height: typeof item.boundingBox?.height === 'number' ? item.boundingBox.height : 6,
+            },
+            confidence: typeof item.confidence === 'number' ? item.confidence : 70,
+            price: item.price,
+          }));
+
+        console.log(`Detected ${detectedItems.length} menu items`);
 
         return {
           detectedItems,
@@ -1611,10 +1636,11 @@ Return ONLY a JSON object with this structure:
       }
     }
 
+    console.warn('Could not parse menu items from response');
     return { detectedItems: [], totalItems: 0 };
   } catch (error) {
     console.error('Error analyzing menu photo:', error);
-    return { detectedItems: [], totalItems: 0 };
+    throw error; // Re-throw to let caller handle it
   }
 }
 

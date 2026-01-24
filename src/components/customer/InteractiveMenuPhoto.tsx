@@ -38,12 +38,14 @@ interface InteractiveMenuPhotoProps {
   restaurantId: string;
   customerAllergens: string[];
   onClose: () => void;
+  embedded?: boolean; // If true, renders inline instead of as a modal
 }
 
 export default function InteractiveMenuPhoto({
   restaurantId,
   customerAllergens,
   onClose,
+  embedded = false,
 }: InteractiveMenuPhotoProps) {
   const [step, setStep] = useState<'capture' | 'analyzing' | 'result'>('capture');
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
@@ -222,7 +224,9 @@ export default function InteractiveMenuPhoto({
       setStep('result');
     } catch (err) {
       console.error('Analysis error:', err);
-      setError('Failed to analyze menu. Please try again.');
+      // Show the actual error message to help with debugging
+      const errorMessage = err instanceof Error ? err.message : 'Failed to analyze menu. Please try again.';
+      setError(errorMessage);
       setStep('capture');
     }
   };
@@ -267,30 +271,46 @@ export default function InteractiveMenuPhoto({
     }
   }, [step]);
 
+  const containerClass = embedded
+    ? "bg-slate-900 flex flex-col min-h-[calc(100vh-180px)]"
+    : "fixed inset-0 bg-slate-900 z-50 flex flex-col";
+
   return (
-    <div className="fixed inset-0 bg-slate-900 z-50 flex flex-col">
-      {/* Header */}
-      <header className="bg-slate-800 border-b border-slate-700 px-4 py-3 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg">
-            <Camera className="w-5 h-5 text-white" />
+    <div className={containerClass}>
+      {/* Header - only show in modal mode */}
+      {!embedded && (
+        <header className="bg-slate-800 border-b border-slate-700 px-4 py-3 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg">
+              <Camera className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="font-bold text-white">Scan Menu</h1>
+              <p className="text-xs text-slate-400">
+                {step === 'capture' && 'Point camera at the menu'}
+                {step === 'analyzing' && 'Analyzing menu...'}
+                {step === 'result' && `${matchedItems.filter(m => m.dbDish).length} items recognized`}
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="font-bold text-white">Scan Menu</h1>
-            <p className="text-xs text-slate-400">
-              {step === 'capture' && 'Point camera at the menu'}
-              {step === 'analyzing' && 'Analyzing menu...'}
-              {step === 'result' && `${matchedItems.filter(m => m.dbDish).length} items recognized`}
-            </p>
-          </div>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+          >
+            <X className="w-5 h-5 text-slate-400" />
+          </button>
+        </header>
+      )}
+
+      {/* Embedded mode status bar */}
+      {embedded && step !== 'capture' && (
+        <div className="bg-slate-800/50 px-4 py-2 text-center">
+          <p className="text-sm text-slate-300">
+            {step === 'analyzing' && 'Analyzing menu...'}
+            {step === 'result' && `${matchedItems.filter(m => m.dbDish).length} items recognized`}
+          </p>
         </div>
-        <button
-          onClick={onClose}
-          className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
-        >
-          <X className="w-5 h-5 text-slate-400" />
-        </button>
-      </header>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 relative overflow-hidden">
@@ -443,7 +463,7 @@ export default function InteractiveMenuPhoto({
                 onClick={onClose}
                 className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-3 rounded-xl font-semibold"
               >
-                Done
+                {embedded ? 'View Full Menu' : 'Done'}
               </button>
             </div>
           </div>
