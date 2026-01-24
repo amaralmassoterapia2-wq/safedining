@@ -59,6 +59,7 @@ export type Database = {
           name: string;
           description: string | null;
           qr_code: string;
+          restaurant_code: string;
           owner_id: string;
           created_at: string;
           updated_at: string;
@@ -68,6 +69,7 @@ export type Database = {
           name: string;
           description?: string | null;
           qr_code?: string;
+          restaurant_code?: string;
           owner_id: string;
           created_at?: string;
           updated_at?: string;
@@ -77,6 +79,7 @@ export type Database = {
           name?: string;
           description?: string | null;
           qr_code?: string;
+          restaurant_code?: string;
           owner_id?: string;
           created_at?: string;
           updated_at?: string;

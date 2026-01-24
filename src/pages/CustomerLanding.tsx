@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Camera, Shield, Sparkles } from 'lucide-react';
-import QRCodeScanner from '../components/customer/QRCodeScanner';
+import { useState, useRef, useEffect } from 'react';
+import { Shield, Sparkles, ArrowRight, AlertCircle } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 interface CustomerLandingProps {
   onQrCodeEntered: (qrCode: string) => void;
@@ -8,16 +8,93 @@ interface CustomerLandingProps {
 }
 
 export default function CustomerLanding({ onQrCodeEntered, onSwitchToRestaurantMode }: CustomerLandingProps) {
-  const [showScanner, setShowScanner] = useState(false);
+  const [code, setCode] = useState(['', '', '', '']);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  const handleScanSuccess = (qrCode: string) => {
-    setShowScanner(false);
-    onQrCodeEntered(qrCode);
+  // Focus first input on mount
+  useEffect(() => {
+    inputRefs.current[0]?.focus();
+  }, []);
+
+  const handleInputChange = (index: number, value: string) => {
+    // Only allow digits
+    const digit = value.replace(/\D/g, '').slice(-1);
+
+    const newCode = [...code];
+    newCode[index] = digit;
+    setCode(newCode);
+    setError(null);
+
+    // Auto-focus next input
+    if (digit && index < 3) {
+      inputRefs.current[index + 1]?.focus();
+    }
+
+    // Auto-submit when all digits are entered
+    if (digit && index === 3 && newCode.every(d => d !== '')) {
+      handleSubmit(newCode.join(''));
+    }
   };
 
-  if (showScanner) {
-    return <QRCodeScanner onScanSuccess={handleScanSuccess} onClose={() => setShowScanner(false)} />;
-  }
+  const handleKeyDown = (index: number, e: React.KeyboardEvent) => {
+    if (e.key === 'Backspace' && !code[index] && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const pastedData = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4);
+    if (pastedData.length === 4) {
+      const newCode = pastedData.split('');
+      setCode(newCode);
+      handleSubmit(pastedData);
+    }
+  };
+
+  const handleSubmit = async (restaurantCode?: string) => {
+    const codeToCheck = restaurantCode || code.join('');
+
+    if (codeToCheck.length !== 4) {
+      setError('Please enter a 4-digit code');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Look up restaurant by code
+      const { data: restaurant, error: queryError } = await supabase
+        .from('restaurants')
+        .select('qr_code')
+        .eq('restaurant_code', codeToCheck)
+        .maybeSingle();
+
+      if (queryError) {
+        throw queryError;
+      }
+
+      if (!restaurant) {
+        setError('Restaurant not found. Please check the code.');
+        setCode(['', '', '', '']);
+        inputRefs.current[0]?.focus();
+        return;
+      }
+
+      // Found the restaurant - use its qr_code for navigation
+      onQrCodeEntered(restaurant.qr_code);
+    } catch (err) {
+      console.error('Error looking up restaurant:', err);
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const isComplete = code.every(d => d !== '');
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col items-center justify-center p-4">
@@ -71,16 +148,56 @@ export default function CustomerLanding({ onQrCodeEntered, onSwitchToRestaurantM
           </div>
         </div>
 
+        {/* Code Input */}
+        <div className="mb-6">
+          <label className="block text-center text-sm font-medium text-slate-600 mb-3">
+            Enter Restaurant Code
+          </label>
+          <div className="flex justify-center gap-3" onPaste={handlePaste}>
+            {code.map((digit, index) => (
+              <input
+                key={index}
+                ref={(el) => (inputRefs.current[index] = el)}
+                type="text"
+                inputMode="numeric"
+                maxLength={1}
+                value={digit}
+                onChange={(e) => handleInputChange(index, e.target.value)}
+                onKeyDown={(e) => handleKeyDown(index, e)}
+                className="w-14 h-16 text-center text-2xl font-bold border-2 border-slate-300 rounded-xl focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all"
+                disabled={loading}
+              />
+            ))}
+          </div>
+          <p className="text-center text-xs text-slate-400 mt-2">
+            Ask your server for the 4-digit code
+          </p>
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg mb-4">
+            <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+
         <button
-          onClick={() => setShowScanner(true)}
-          className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-4 rounded-xl font-bold text-lg hover:from-emerald-600 hover:to-teal-700 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
+          onClick={() => handleSubmit()}
+          disabled={!isComplete || loading}
+          className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-4 rounded-xl font-bold text-lg hover:from-emerald-600 hover:to-teal-700 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <Camera className="w-6 h-6" />
-          Get Started
+          {loading ? (
+            'Finding Restaurant...'
+          ) : (
+            <>
+              View Menu
+              <ArrowRight className="w-5 h-5" />
+            </>
+          )}
         </button>
 
         <p className="text-center text-slate-400 text-sm mt-4">
-          Scan restaurant QR code, then snap a photo of the menu
+          Enter the code, then snap a photo of the menu
         </p>
       </div>
 

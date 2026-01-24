@@ -22,6 +22,7 @@ type Restaurant = {
   name: string;
   description: string | null;
   qr_code: string;
+  restaurant_code: string;
 };
 
 type Tab = 'menu' | 'dashboard';
@@ -129,7 +130,12 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold text-white">{restaurant.name}</h1>
-              <p className="text-sm text-slate-400 mt-1">Restaurant Admin Panel</p>
+              <div className="flex items-center gap-3 mt-1">
+                <p className="text-sm text-slate-400">Restaurant Admin Panel</p>
+                <span className="px-3 py-1 bg-emerald-500/20 border border-emerald-500/30 rounded-full text-emerald-400 text-sm font-mono font-bold">
+                  Code: {restaurant.restaurant_code}
+                </span>
+              </div>
             </div>
             <div className="flex items-center gap-3">
               <button
@@ -203,13 +209,40 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
               </button>
             </div>
 
+            {/* Restaurant Code - Primary */}
             <div className="text-center mb-6">
-              <div className="bg-slate-50 rounded-xl p-6 mb-4">
-                <canvas ref={qrCanvasRef} className="mx-auto" />
+              <div className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl p-6 mb-4 border-2 border-emerald-200">
+                <p className="text-sm font-medium text-slate-600 mb-2">Your Restaurant Code</p>
+                <div className="flex justify-center gap-2">
+                  {restaurant.restaurant_code.split('').map((digit, i) => (
+                    <span
+                      key={i}
+                      className="w-12 h-14 flex items-center justify-center bg-white border-2 border-emerald-300 rounded-lg text-2xl font-bold text-slate-900 shadow-sm"
+                    >
+                      {digit}
+                    </span>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-500 mt-3">
+                  Share this code with customers to access your menu
+                </p>
               </div>
-              <p className="text-sm text-slate-600">
-                Customers can scan this QR code to view your menu with allergen information
-              </p>
+            </div>
+
+            {/* QR Code - Secondary */}
+            <div className="text-center mb-6">
+              <details className="group">
+                <summary className="text-sm text-slate-500 cursor-pointer hover:text-slate-700 flex items-center justify-center gap-2">
+                  <QrCode className="w-4 h-4" />
+                  Show QR Code (optional)
+                </summary>
+                <div className="bg-slate-50 rounded-xl p-4 mt-3">
+                  <canvas ref={qrCanvasRef} className="mx-auto" />
+                  <p className="text-xs text-slate-500 mt-2">
+                    Customers can also scan this QR code
+                  </p>
+                </div>
+              </details>
             </div>
 
             <div className="space-y-3">

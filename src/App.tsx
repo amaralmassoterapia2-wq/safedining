@@ -29,9 +29,27 @@ function AppContent() {
     if (path.startsWith('/menu/')) {
       const code = path.split('/menu/')[1];
       if (code) {
-        setQrCode(code);
-        setGuestView('dietary-setup');
-        setUserMode('guest');
+        // Check if it's a 4-digit restaurant code or a qr_code
+        if (/^\d{4}$/.test(code)) {
+          // It's a restaurant code - look up the qr_code
+          supabase
+            .from('restaurants')
+            .select('qr_code')
+            .eq('restaurant_code', code)
+            .maybeSingle()
+            .then(({ data }) => {
+              if (data) {
+                setQrCode(data.qr_code);
+                setGuestView('dietary-setup');
+                setUserMode('guest');
+              }
+            });
+        } else {
+          // It's a qr_code
+          setQrCode(code);
+          setGuestView('dietary-setup');
+          setUserMode('guest');
+        }
       }
     }
     // Handle /?qr=CODE format (from QR code share links)

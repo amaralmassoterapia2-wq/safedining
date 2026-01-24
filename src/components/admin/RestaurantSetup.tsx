@@ -7,6 +7,30 @@ interface RestaurantSetupProps {
   onRestaurantCreated: () => void;
 }
 
+// Generate a unique 4-digit restaurant code
+async function generateUniqueCode(): Promise<string> {
+  const maxAttempts = 100;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    // Generate random 4-digit code (1000-9999)
+    const code = String(Math.floor(1000 + Math.random() * 9000));
+
+    // Check if code already exists
+    const { data: existing } = await supabase
+      .from('restaurants')
+      .select('id')
+      .eq('restaurant_code', code)
+      .maybeSingle();
+
+    if (!existing) {
+      return code;
+    }
+  }
+
+  // Fallback: use timestamp-based code if random fails
+  return String(Date.now()).slice(-4);
+}
+
 export default function RestaurantSetup({ onRestaurantCreated }: RestaurantSetupProps) {
   const { user } = useAuth();
   const [name, setName] = useState('');
@@ -23,11 +47,13 @@ export default function RestaurantSetup({ onRestaurantCreated }: RestaurantSetup
 
     try {
       const qrCode = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const restaurantCode = await generateUniqueCode();
 
       const { error: insertError } = await supabase.from('restaurants').insert({
         name: name.trim(),
         description: description.trim() || null,
         qr_code: qrCode,
+        restaurant_code: restaurantCode,
         owner_id: user.id,
       });
 
