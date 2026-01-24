@@ -72,8 +72,8 @@ export default function QRCodeScanner({ onScanSuccess, onClose }: QRCodeScannerP
         <div className="flex items-center gap-3">
           <Camera className="w-6 h-6" />
           <div>
-            <h2 className="font-semibold">Scan QR Code</h2>
-            <p className="text-sm text-slate-300">Point camera at restaurant QR code</p>
+            <h2 className="font-semibold">Step 1: Scan QR Code</h2>
+            <p className="text-sm text-slate-300">Then you can snap a photo of the menu</p>
           </div>
         </div>
         <button
@@ -101,7 +101,10 @@ export default function QRCodeScanner({ onScanSuccess, onClose }: QRCodeScannerP
           <div className="w-full max-w-md px-4">
             <div id="qr-reader" className="rounded-xl overflow-hidden shadow-2xl" />
             <p className="text-white text-center mt-6 text-sm">
-              Position the QR code within the frame
+              Position the restaurant's QR code within the frame
+            </p>
+            <p className="text-slate-400 text-center mt-2 text-xs">
+              After scanning, you can take a photo of the physical menu
             </p>
           </div>
         )}

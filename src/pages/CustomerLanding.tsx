@@ -76,11 +76,11 @@ export default function CustomerLanding({ onQrCodeEntered, onSwitchToRestaurantM
           className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-4 rounded-xl font-bold text-lg hover:from-emerald-600 hover:to-teal-700 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
         >
           <Camera className="w-6 h-6" />
-          Scan Restaurant Menu
+          Get Started
         </button>
 
         <p className="text-center text-slate-400 text-sm mt-4">
-          Point your camera at the restaurant's QR code
+          Scan restaurant QR code, then snap a photo of the menu
         </p>
       </div>
 
