@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { supabase, Database } from '../lib/supabase';
 import { getOrCreateSessionId } from '../lib/customerSession';
-import { Settings, Shield, ChevronRight, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
+import { Settings, Shield, ChevronRight, AlertCircle, CheckCircle, XCircle, Camera } from 'lucide-react';
 import BottomSheet from '../components/common/BottomSheet';
 import DishDetail from '../components/customer/DishDetail';
+import InteractiveMenuPhoto from '../components/customer/InteractiveMenuPhoto';
 import { analyzeDishSafety } from '../lib/safetyAnalysis';
 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
@@ -40,6 +41,7 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
   const [loading, setLoading] = useState(true);
   const [selectedDish, setSelectedDish] = useState<MenuItemWithData | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>('all');
+  const [showMenuScanner, setShowMenuScanner] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -338,6 +340,15 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
         )}
       </main>
 
+      {/* Floating Scan Menu Button */}
+      <button
+        onClick={() => setShowMenuScanner(true)}
+        className="fixed bottom-6 right-6 bg-gradient-to-r from-emerald-500 to-teal-600 text-white p-4 rounded-full shadow-xl hover:shadow-2xl transition-all hover:scale-105 z-20"
+        title="Scan physical menu"
+      >
+        <Camera className="w-6 h-6" />
+      </button>
+
       <BottomSheet
         isOpen={!!selectedDish}
         onClose={() => setSelectedDish(null)}
@@ -351,6 +362,15 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
           />
         )}
       </BottomSheet>
+
+      {/* Interactive Menu Photo Scanner */}
+      {showMenuScanner && (
+        <InteractiveMenuPhoto
+          restaurantId={restaurant.id}
+          customerAllergens={customerAllergens}
+          onClose={() => setShowMenuScanner(false)}
+        />
+      )}
     </div>
   );
 }

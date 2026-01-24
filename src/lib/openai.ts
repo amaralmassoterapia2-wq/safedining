@@ -1477,3 +1477,209 @@ export async function analyzeDietaryMenuPossibilities(
 
   return results;
 }
+
+/**
+ * Menu Photo Analysis - OCR and dish detection
+ */
+export interface DetectedMenuItem {
+  name: string;
+  boundingBox: {
+    x: number; // percentage 0-100
+    y: number; // percentage 0-100
+    width: number; // percentage 0-100
+    height: number; // percentage 0-100
+  };
+  confidence: number;
+  price?: string;
+}
+
+export interface MenuPhotoAnalysisResult {
+  detectedItems: DetectedMenuItem[];
+  totalItems: number;
+}
+
+/**
+ * Analyze a menu photo using OpenAI Vision to extract dish names and approximate positions
+ */
+export async function analyzeMenuPhoto(
+  imageBase64: string
+): Promise<MenuPhotoAnalysisResult> {
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
+    return { detectedItems: [], totalItems: 0 };
+  }
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a menu OCR expert. Analyze the menu image and extract all dish/food item names you can see.
+
+For each dish, provide:
+1. The dish name exactly as written on the menu
+2. An approximate bounding box position (as percentages of the image dimensions)
+3. A confidence score (0-100) for the detection
+4. The price if visible
+
+IMPORTANT:
+- Focus on dish/food item names, not section headers or restaurant info
+- The bounding box should be approximate - x,y is the top-left corner
+- Use percentages (0-100) for positions so they work at any image size
+- Include partial matches if you can read most of the dish name
+- Sort items roughly from top to bottom, left to right
+
+Return ONLY a JSON object with this structure:
+{
+  "items": [
+    {
+      "name": "Dish Name",
+      "boundingBox": { "x": 10, "y": 20, "width": 30, "height": 5 },
+      "confidence": 95,
+      "price": "$12.99"
+    }
+  ]
+}`,
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Extract all dish names from this menu image with their approximate positions:',
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: imageBase64.startsWith('data:') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`,
+                },
+              },
+            ],
+          },
+        ],
+        max_tokens: 2000,
+        temperature: 0.2,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to analyze menu photo:', response.status);
+      return { detectedItems: [], totalItems: 0 };
+    }
+
+    const data = await response.json();
+    const content: string = data.choices[0]?.message?.content || '{}';
+
+    // Parse JSON from response
+    let jsonString = content;
+    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      jsonString = codeBlockMatch[1].trim();
+    }
+
+    const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.items && Array.isArray(parsed.items)) {
+        const detectedItems: DetectedMenuItem[] = parsed.items.map((item: {
+          name?: string;
+          boundingBox?: { x?: number; y?: number; width?: number; height?: number };
+          confidence?: number;
+          price?: string;
+        }) => ({
+          name: String(item.name || ''),
+          boundingBox: {
+            x: typeof item.boundingBox?.x === 'number' ? item.boundingBox.x : 0,
+            y: typeof item.boundingBox?.y === 'number' ? item.boundingBox.y : 0,
+            width: typeof item.boundingBox?.width === 'number' ? item.boundingBox.width : 20,
+            height: typeof item.boundingBox?.height === 'number' ? item.boundingBox.height : 5,
+          },
+          confidence: typeof item.confidence === 'number' ? item.confidence : 50,
+          price: item.price,
+        }));
+
+        return {
+          detectedItems,
+          totalItems: detectedItems.length,
+        };
+      }
+    }
+
+    return { detectedItems: [], totalItems: 0 };
+  } catch (error) {
+    console.error('Error analyzing menu photo:', error);
+    return { detectedItems: [], totalItems: 0 };
+  }
+}
+
+/**
+ * Fuzzy string matching for dish names
+ * Returns a score from 0-100 (100 = exact match)
+ */
+export function fuzzyMatchScore(str1: string, str2: string): number {
+  const s1 = str1.toLowerCase().trim();
+  const s2 = str2.toLowerCase().trim();
+
+  if (s1 === s2) return 100;
+
+  // Check if one contains the other
+  if (s1.includes(s2) || s2.includes(s1)) {
+    const longer = s1.length > s2.length ? s1 : s2;
+    const shorter = s1.length > s2.length ? s2 : s1;
+    return Math.round((shorter.length / longer.length) * 90);
+  }
+
+  // Levenshtein distance
+  const matrix: number[][] = [];
+  for (let i = 0; i <= s1.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= s2.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= s1.length; i++) {
+    for (let j = 1; j <= s2.length; j++) {
+      const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  const distance = matrix[s1.length][s2.length];
+  const maxLen = Math.max(s1.length, s2.length);
+  const similarity = ((maxLen - distance) / maxLen) * 100;
+
+  return Math.round(similarity);
+}
+
+/**
+ * Find the best matching database dish for a detected menu item
+ */
+export function findBestMatch(
+  detectedName: string,
+  dbDishes: { id: string; name: string }[],
+  threshold: number = 60
+): { dish: { id: string; name: string } | null; score: number } {
+  let bestMatch: { id: string; name: string } | null = null;
+  let bestScore = 0;
+
+  for (const dish of dbDishes) {
+    const score = fuzzyMatchScore(detectedName, dish.name);
+    if (score > bestScore && score >= threshold) {
+      bestScore = score;
+      bestMatch = dish;
+    }
+  }
+
+  return { dish: bestMatch, score: bestScore };
+}
