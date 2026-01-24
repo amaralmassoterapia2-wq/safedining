@@ -1106,3 +1106,374 @@ export async function estimateCalories(
   const nutrition = await estimateNutrition(dishName, ingredients);
   return nutrition.calories;
 }
+
+/**
+ * Dietary menu analysis types and functions
+ */
+export interface DietaryMenuCategory {
+  id: string;
+  name: string;
+  description: string;
+  type: 'allergen-free' | 'dietary-style' | 'health-focused';
+}
+
+export const DIETARY_MENU_CATEGORIES: DietaryMenuCategory[] = [
+  { id: 'shellfish-free', name: 'Shellfish-Free', description: 'No shrimp, crab, lobster, or other crustaceans', type: 'allergen-free' },
+  { id: 'nut-free', name: 'Nut-Free', description: 'No tree nuts (almonds, walnuts, cashews, etc.)', type: 'allergen-free' },
+  { id: 'peanut-free', name: 'Peanut-Free', description: 'No peanuts or peanut-derived products', type: 'allergen-free' },
+  { id: 'dairy-free', name: 'Dairy-Free', description: 'No milk, cheese, butter, or other dairy products', type: 'allergen-free' },
+  { id: 'gluten-free', name: 'Gluten-Free', description: 'No wheat, barley, rye, or gluten-containing ingredients', type: 'allergen-free' },
+  { id: 'egg-free', name: 'Egg-Free', description: 'No eggs or egg-derived products', type: 'allergen-free' },
+  { id: 'soy-free', name: 'Soy-Free', description: 'No soybeans, tofu, soy sauce, or soy products', type: 'allergen-free' },
+  { id: 'fish-free', name: 'Fish-Free', description: 'No fish or fish-derived products', type: 'allergen-free' },
+  { id: 'sesame-free', name: 'Sesame-Free', description: 'No sesame seeds, tahini, or sesame oil', type: 'allergen-free' },
+  { id: 'vegetarian', name: 'Vegetarian', description: 'No meat, poultry, or fish (dairy/eggs allowed)', type: 'dietary-style' },
+  { id: 'vegan', name: 'Vegan', description: 'No animal products (meat, dairy, eggs, honey)', type: 'dietary-style' },
+  { id: 'low-carb', name: 'Low-Carb', description: 'Less than 20g net carbs per serving', type: 'health-focused' },
+  { id: 'low-sodium', name: 'Low-Sodium', description: 'Less than 600mg sodium per serving', type: 'health-focused' },
+];
+
+export interface DishForDietaryAnalysis {
+  id: string;
+  name: string;
+  description: string | null;
+  description_allergens: string[];
+  carbs_g: number | null;
+  sodium_mg: number | null;
+  ingredients: {
+    name: string;
+    allergens: string[];
+    is_removable: boolean;
+    is_substitutable: boolean;
+    substitutes: { name: string; allergens: string[] }[];
+  }[];
+  cookingSteps: {
+    description: string;
+    cross_contact_risk: string[];
+  }[];
+}
+
+export interface DietaryMenuAnalysisResult {
+  categoryId: string;
+  status: 'available' | 'limited' | 'unavailable';
+  availableDishes: { id: string; name: string; requiresModification: boolean; modifications?: string[] }[];
+  totalAvailable: number;
+  reason?: string;
+  warning?: string;
+}
+
+/**
+ * Map dietary category to allergens to avoid
+ */
+function getAllergensForCategory(categoryId: string): string[] {
+  switch (categoryId) {
+    case 'shellfish-free': return ['Shellfish'];
+    case 'nut-free': return ['Tree Nuts'];
+    case 'peanut-free': return ['Peanuts'];
+    case 'dairy-free': return ['Milk'];
+    case 'gluten-free': return ['Gluten', 'Wheat'];
+    case 'egg-free': return ['Eggs'];
+    case 'soy-free': return ['Soy'];
+    case 'fish-free': return ['Fish'];
+    case 'sesame-free': return ['Sesame'];
+    default: return [];
+  }
+}
+
+/**
+ * Check if a dish is safe for an allergen-free diet
+ */
+function analyzeDishForAllergenFree(
+  dish: DishForDietaryAnalysis,
+  allergensToAvoid: string[]
+): { safe: boolean; requiresModification: boolean; modifications: string[]; blockers: string[] } {
+  const allergensLower = allergensToAvoid.map(a => a.toLowerCase());
+  const modifications: string[] = [];
+  const blockers: string[] = [];
+  let hasBlockingAllergen = false;
+
+  // Check description allergens
+  for (const descAllergen of dish.description_allergens) {
+    const descLower = descAllergen.toLowerCase();
+    if (allergensLower.some(a => descLower.includes(a) || a.includes(descLower))) {
+      blockers.push(`Mentioned in description: ${descAllergen}`);
+      hasBlockingAllergen = true;
+    }
+  }
+
+  // Check ingredients
+  for (const ing of dish.ingredients) {
+    const ingAllergensLower = ing.allergens.map(a => a.toLowerCase());
+    const hasAllergen = allergensLower.some(a =>
+      ingAllergensLower.includes(a) || ing.name.toLowerCase().includes(a)
+    );
+
+    if (hasAllergen) {
+      if (ing.is_removable) {
+        modifications.push(`Remove ${ing.name}`);
+      } else if (ing.is_substitutable) {
+        // Check if any substitute is safe
+        const safeSubstitutes = ing.substitutes.filter(sub => {
+          const subAllergensLower = sub.allergens.map(a => a.toLowerCase());
+          return !allergensLower.some(a => subAllergensLower.includes(a));
+        });
+        if (safeSubstitutes.length > 0) {
+          modifications.push(`Substitute ${ing.name} with ${safeSubstitutes.map(s => s.name).join(' or ')}`);
+        } else {
+          blockers.push(`${ing.name} cannot be safely substituted`);
+          hasBlockingAllergen = true;
+        }
+      } else {
+        blockers.push(`Contains ${ing.name} (non-removable)`);
+        hasBlockingAllergen = true;
+      }
+    }
+  }
+
+  // Check cooking steps for cross-contamination
+  for (const step of dish.cookingSteps) {
+    for (const risk of step.cross_contact_risk) {
+      const riskLower = risk.toLowerCase();
+      if (allergensLower.some(a => riskLower.includes(a))) {
+        blockers.push(`Cross-contamination risk: ${risk}`);
+        hasBlockingAllergen = true;
+      }
+    }
+  }
+
+  return {
+    safe: !hasBlockingAllergen,
+    requiresModification: modifications.length > 0,
+    modifications,
+    blockers,
+  };
+}
+
+/**
+ * Analyze dietary menu possibilities using OpenAI for complex dietary styles
+ */
+export async function analyzeDietaryMenuWithAI(
+  dishes: DishForDietaryAnalysis[],
+  categoryId: string
+): Promise<{ dishes: { id: string; name: string; safe: boolean; requiresModification: boolean; modifications: string[]; reason?: string }[] }> {
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
+    return { dishes: [] };
+  }
+
+  const dishList = dishes.map(d => ({
+    id: d.id,
+    name: d.name,
+    description: d.description,
+    ingredients: d.ingredients.map(i => ({
+      name: i.name,
+      removable: i.is_removable,
+      substitutable: i.is_substitutable,
+      substitutes: i.substitutes.map(s => s.name),
+    })),
+    carbs_g: d.carbs_g,
+    sodium_mg: d.sodium_mg,
+  }));
+
+  let categoryDescription = '';
+  switch (categoryId) {
+    case 'vegetarian':
+      categoryDescription = 'VEGETARIAN: No meat (beef, pork, lamb, poultry, game), no fish, no seafood. Eggs and dairy ARE allowed. Gelatin is NOT vegetarian.';
+      break;
+    case 'vegan':
+      categoryDescription = 'VEGAN: No animal products at all - no meat, fish, seafood, dairy, eggs, honey, gelatin, or any animal-derived ingredients.';
+      break;
+    case 'low-carb':
+      categoryDescription = 'LOW-CARB: Less than 20g net carbs per serving. Focus on proteins, fats, and non-starchy vegetables. No bread, pasta, rice, potatoes, sugar.';
+      break;
+    case 'low-sodium':
+      categoryDescription = 'LOW-SODIUM: Less than 600mg sodium per serving. Avoid processed foods, soy sauce, pickled items, cured meats, high-sodium seasonings.';
+      break;
+  }
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a dietary expert. Analyze menu items to determine if they can be served for a specific dietary requirement.
+
+${categoryDescription}
+
+For each dish, determine:
+1. Is it naturally compliant with the diet?
+2. Can it become compliant by removing or substituting ingredients?
+3. What modifications are needed?
+
+IMPORTANT:
+- Be strict about the dietary requirements
+- Consider hidden ingredients (e.g., butter in sauces, chicken broth, etc.)
+- If an ingredient is marked as "removable", it CAN be removed
+- If an ingredient is marked as "substitutable", check the substitutes list
+- For low-carb/low-sodium, use the provided nutrition values if available
+
+Return ONLY a JSON object with this structure:
+{
+  "dishes": [
+    {
+      "id": "dish-id",
+      "name": "Dish Name",
+      "safe": true/false,
+      "requiresModification": true/false,
+      "modifications": ["Remove X", "Substitute Y with Z"],
+      "reason": "Brief explanation if not safe"
+    }
+  ]
+}`,
+          },
+          {
+            role: 'user',
+            content: `Analyze these dishes for ${categoryDescription.split(':')[0]} diet:
+
+${JSON.stringify(dishList, null, 2)}
+
+Return the JSON analysis.`,
+          },
+        ],
+        max_tokens: 3000,
+        temperature: 0.2,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to analyze dietary menu:', response.status);
+      return { dishes: [] };
+    }
+
+    const data = await response.json();
+    const content: string = data.choices[0]?.message?.content || '{}';
+
+    // Parse JSON from response
+    let jsonString = content;
+    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      jsonString = codeBlockMatch[1].trim();
+    }
+
+    const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.dishes && Array.isArray(parsed.dishes)) {
+        return {
+          dishes: parsed.dishes.map((d: { id?: string; name?: string; safe?: boolean; requiresModification?: boolean; modifications?: string[]; reason?: string }) => ({
+            id: String(d.id || ''),
+            name: String(d.name || ''),
+            safe: d.safe === true,
+            requiresModification: d.requiresModification === true,
+            modifications: Array.isArray(d.modifications) ? d.modifications : [],
+            reason: d.reason || undefined,
+          })),
+        };
+      }
+    }
+    return { dishes: [] };
+  } catch (error) {
+    console.error('Error analyzing dietary menu:', error);
+    return { dishes: [] };
+  }
+}
+
+/**
+ * Comprehensive dietary menu analysis for all categories
+ */
+export async function analyzeDietaryMenuPossibilities(
+  dishes: DishForDietaryAnalysis[]
+): Promise<DietaryMenuAnalysisResult[]> {
+  const results: DietaryMenuAnalysisResult[] = [];
+
+  for (const category of DIETARY_MENU_CATEGORIES) {
+    if (category.type === 'allergen-free') {
+      // Use local analysis for allergen-free categories
+      const allergensToAvoid = getAllergensForCategory(category.id);
+      const availableDishes: DietaryMenuAnalysisResult['availableDishes'] = [];
+
+      for (const dish of dishes) {
+        const analysis = analyzeDishForAllergenFree(dish, allergensToAvoid);
+        if (analysis.safe) {
+          availableDishes.push({
+            id: dish.id,
+            name: dish.name,
+            requiresModification: analysis.requiresModification,
+            modifications: analysis.modifications.length > 0 ? analysis.modifications : undefined,
+          });
+        }
+      }
+
+      let status: 'available' | 'limited' | 'unavailable' = 'available';
+      let reason: string | undefined;
+      let warning: string | undefined;
+
+      if (availableDishes.length === 0) {
+        status = 'unavailable';
+        reason = `No ${category.name.toLowerCase()} items on your menu. All dishes contain ${allergensToAvoid.join(' or ')} or have cross-contamination risks that cannot be eliminated.`;
+      } else if (availableDishes.length < 5) {
+        status = 'limited';
+        warning = `Only ${availableDishes.length} dish${availableDishes.length === 1 ? '' : 'es'} available. Consider adding more ${category.name.toLowerCase()} options for better accessibility.`;
+      }
+
+      results.push({
+        categoryId: category.id,
+        status,
+        availableDishes,
+        totalAvailable: availableDishes.length,
+        reason,
+        warning,
+      });
+    } else {
+      // Use AI analysis for dietary styles (vegetarian, vegan, low-carb, low-sodium)
+      const aiAnalysis = await analyzeDietaryMenuWithAI(dishes, category.id);
+      const availableDishes: DietaryMenuAnalysisResult['availableDishes'] = [];
+
+      for (const dishAnalysis of aiAnalysis.dishes) {
+        if (dishAnalysis.safe) {
+          availableDishes.push({
+            id: dishAnalysis.id,
+            name: dishAnalysis.name,
+            requiresModification: dishAnalysis.requiresModification,
+            modifications: dishAnalysis.modifications.length > 0 ? dishAnalysis.modifications : undefined,
+          });
+        }
+      }
+
+      let status: 'available' | 'limited' | 'unavailable' = 'available';
+      let reason: string | undefined;
+      let warning: string | undefined;
+
+      if (availableDishes.length === 0) {
+        status = 'unavailable';
+        const categoryName = category.name.toLowerCase();
+        reason = `No ${categoryName} items on your menu. ${
+          category.id === 'vegetarian' ? 'All dishes contain meat, fish, or seafood.' :
+          category.id === 'vegan' ? 'All dishes contain animal products.' :
+          category.id === 'low-carb' ? 'All dishes exceed 20g carbs per serving.' :
+          'All dishes exceed 600mg sodium per serving.'
+        }`;
+      } else if (availableDishes.length < 5) {
+        status = 'limited';
+        warning = `Only ${availableDishes.length} dish${availableDishes.length === 1 ? '' : 'es'} available. Consider adding more ${category.name.toLowerCase()} options.`;
+      }
+
+      results.push({
+        categoryId: category.id,
+        status,
+        availableDishes,
+        totalAvailable: availableDishes.length,
+        reason,
+        warning,
+      });
+    }
+  }
+
+  return results;
+}
