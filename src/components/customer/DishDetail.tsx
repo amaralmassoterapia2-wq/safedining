@@ -21,14 +21,8 @@ interface IngredientWithModifications extends Ingredient {
 }
 
 // Extended menu item with optional nutrition and photo fields
+// Field names match the database schema
 interface MenuItemWithExtras extends MenuItem {
-  calories?: number | null;
-  protein_grams?: number | null;
-  carbs_grams?: number | null;
-  fat_grams?: number | null;
-  fiber_grams?: number | null;
-  sugar_grams?: number | null;
-  sodium_mg?: number | null;
   photo_url?: string | null;
 }
 
@@ -109,7 +103,7 @@ export default function DishDetail({ dish, customerAllergens }: DishDetailProps)
   };
 
   const statusConfig = getStatusConfig();
-  const hasNutrition = dish.calories || dish.protein_grams || dish.carbs_grams || dish.fat_grams;
+  const hasNutrition = dish.calories || dish.protein_g || dish.carbs_g || dish.fat_g || dish.sodium_mg || dish.cholesterol_mg;
 
   return (
     <div className="p-6 space-y-6">
@@ -363,46 +357,96 @@ export default function DishDetail({ dish, customerAllergens }: DishDetailProps)
               </div>
             )}
 
-            {(dish.protein_grams || dish.carbs_grams || dish.fat_grams) && (
+            {/* Macronutrients */}
+            {(dish.protein_g || dish.carbs_g || dish.fat_g) && (
               <div className="pt-4 border-t border-slate-200 space-y-3">
                 <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Macronutrients</h4>
 
-                {dish.protein_grams && (
+                {dish.protein_g !== null && dish.protein_g !== undefined && (
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-slate-700">Protein</span>
-                    <span className="text-sm font-semibold text-slate-900">{dish.protein_grams}g</span>
+                    <span className="text-sm font-semibold text-slate-900">{dish.protein_g}g</span>
                   </div>
                 )}
 
-                {dish.carbs_grams && (
+                {dish.carbs_g !== null && dish.carbs_g !== undefined && (
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-700">Carbohydrates</span>
-                    <span className="text-sm font-semibold text-slate-900">{dish.carbs_grams}g</span>
+                    <span className="text-sm text-slate-700">Total Carbohydrates</span>
+                    <span className="text-sm font-semibold text-slate-900">{dish.carbs_g}g</span>
                   </div>
                 )}
 
-                {dish.fat_grams && (
+                {dish.carbs_fiber_g !== null && dish.carbs_fiber_g !== undefined && (
+                  <div className="flex items-center justify-between pl-4">
+                    <span className="text-sm text-slate-500">Dietary Fiber</span>
+                    <span className="text-sm font-medium text-slate-700">{dish.carbs_fiber_g}g</span>
+                  </div>
+                )}
+
+                {dish.carbs_sugar_g !== null && dish.carbs_sugar_g !== undefined && (
+                  <div className="flex items-center justify-between pl-4">
+                    <span className="text-sm text-slate-500">Sugars</span>
+                    <span className="text-sm font-medium text-slate-700">{dish.carbs_sugar_g}g</span>
+                  </div>
+                )}
+
+                {dish.carbs_added_sugar_g !== null && dish.carbs_added_sugar_g !== undefined && (
+                  <div className="flex items-center justify-between pl-8">
+                    <span className="text-sm text-slate-400">Added Sugars</span>
+                    <span className="text-sm font-medium text-slate-600">{dish.carbs_added_sugar_g}g</span>
+                  </div>
+                )}
+
+                {dish.fat_g !== null && dish.fat_g !== undefined && (
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-700">Fat</span>
-                    <span className="text-sm font-semibold text-slate-900">{dish.fat_grams}g</span>
+                    <span className="text-sm text-slate-700">Total Fat</span>
+                    <span className="text-sm font-semibold text-slate-900">{dish.fat_g}g</span>
                   </div>
                 )}
 
-                {dish.fiber_grams && (
+                {dish.fat_saturated_g !== null && dish.fat_saturated_g !== undefined && (
+                  <div className="flex items-center justify-between pl-4">
+                    <span className="text-sm text-slate-500">Saturated Fat</span>
+                    <span className="text-sm font-medium text-slate-700">{dish.fat_saturated_g}g</span>
+                  </div>
+                )}
+
+                {dish.fat_trans_g !== null && dish.fat_trans_g !== undefined && (
+                  <div className="flex items-center justify-between pl-4">
+                    <span className="text-sm text-slate-500">Trans Fat</span>
+                    <span className="text-sm font-medium text-slate-700">{dish.fat_trans_g}g</span>
+                  </div>
+                )}
+
+                {dish.fat_polyunsaturated_g !== null && dish.fat_polyunsaturated_g !== undefined && (
+                  <div className="flex items-center justify-between pl-4">
+                    <span className="text-sm text-slate-500">Polyunsaturated Fat</span>
+                    <span className="text-sm font-medium text-slate-700">{dish.fat_polyunsaturated_g}g</span>
+                  </div>
+                )}
+
+                {dish.fat_monounsaturated_g !== null && dish.fat_monounsaturated_g !== undefined && (
+                  <div className="flex items-center justify-between pl-4">
+                    <span className="text-sm text-slate-500">Monounsaturated Fat</span>
+                    <span className="text-sm font-medium text-slate-700">{dish.fat_monounsaturated_g}g</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Minerals */}
+            {(dish.sodium_mg || dish.cholesterol_mg) && (
+              <div className="pt-4 border-t border-slate-200 space-y-3">
+                <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Other</h4>
+
+                {dish.cholesterol_mg !== null && dish.cholesterol_mg !== undefined && (
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-700">Fiber</span>
-                    <span className="text-sm font-semibold text-slate-900">{dish.fiber_grams}g</span>
+                    <span className="text-sm text-slate-700">Cholesterol</span>
+                    <span className="text-sm font-semibold text-slate-900">{dish.cholesterol_mg}mg</span>
                   </div>
                 )}
 
-                {dish.sugar_grams && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-700">Sugar</span>
-                    <span className="text-sm font-semibold text-slate-900">{dish.sugar_grams}g</span>
-                  </div>
-                )}
-
-                {dish.sodium_mg && (
+                {dish.sodium_mg !== null && dish.sodium_mg !== undefined && (
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-slate-700">Sodium</span>
                     <span className="text-sm font-semibold text-slate-900">{dish.sodium_mg}mg</span>

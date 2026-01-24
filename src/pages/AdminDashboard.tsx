@@ -5,8 +5,17 @@ import { LogOut, QrCode, Plus, BarChart3, X, Download, Copy, Check } from 'lucid
 import RestaurantSetup from '../components/admin/RestaurantSetup';
 import MenuManager from '../components/admin/MenuManager';
 import AccessibilityDashboard from '../components/admin/AccessibilityDashboard';
-import ChefRequests from '../components/admin/ChefRequests';
 import QRCodeLib from 'qrcode';
+
+// Get the base URL for QR codes - use environment variable if set, otherwise use current origin
+const getMenuBaseUrl = (): string => {
+  // Check for explicit production URL in environment
+  const envUrl = import.meta.env.VITE_PUBLIC_URL;
+  if (envUrl) return envUrl;
+
+  // Fallback to current origin (works in production, but not ideal for dev environments)
+  return window.location.origin;
+};
 
 type Restaurant = {
   id: string;
@@ -15,7 +24,7 @@ type Restaurant = {
   qr_code: string;
 };
 
-type Tab = 'menu' | 'dashboard' | 'requests';
+type Tab = 'menu' | 'dashboard';
 
 interface AdminDashboardProps {
   onBackToGuest?: () => void;
@@ -48,7 +57,7 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
       if (!showQRModal || !restaurant || !qrCanvasRef.current) return;
 
       try {
-        const menuUrl = `${window.location.origin}/?qr=${restaurant.qr_code}`;
+        const menuUrl = `${getMenuBaseUrl()}/menu/${restaurant.qr_code}`;
 
         await QRCodeLib.toCanvas(qrCanvasRef.current, menuUrl, {
           width: 280,
@@ -71,7 +80,7 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
 
   const handleCopyUrl = () => {
     if (!restaurant) return;
-    const qrUrl = `${window.location.origin}/?qr=${restaurant.qr_code}`;
+    const qrUrl = `${getMenuBaseUrl()}/menu/${restaurant.qr_code}`;
     navigator.clipboard.writeText(qrUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -171,16 +180,6 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
                 Accessibility Dashboard
               </div>
             </button>
-            <button
-              onClick={() => setActiveTab('requests')}
-              className={`py-4 px-2 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === 'requests'
-                  ? 'border-emerald-500 text-white'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Chef Requests
-            </button>
           </div>
         </div>
       </nav>
@@ -188,7 +187,6 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === 'menu' && <MenuManager restaurantId={restaurant.id} />}
         {activeTab === 'dashboard' && <AccessibilityDashboard restaurantId={restaurant.id} />}
-        {activeTab === 'requests' && <ChefRequests restaurantId={restaurant.id} />}
       </main>
 
       {/* QR Code Modal */}
@@ -227,7 +225,7 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
               <div className="flex gap-2">
                 <input
                   type="text"
-                  value={`${window.location.origin}/?qr=${restaurant.qr_code}`}
+                  value={`${getMenuBaseUrl()}/menu/${restaurant.qr_code}`}
                   readOnly
                   className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm bg-slate-50"
                 />
