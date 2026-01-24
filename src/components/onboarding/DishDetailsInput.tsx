@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase, Database, WeightUnit, WEIGHT_UNITS } from '../../lib/supabase';
 import { ScannedDish } from '../../pages/RestaurantOnboarding';
 import { Check, Upload, X, ChevronRight, ChevronDown, Plus, Sparkles, Loader2, AlertTriangle, Edit3, Clock, Repeat, Trash2, Search } from 'lucide-react';
-import { suggestIngredientsForDish, detectAllergens, detectCrossContactRisks, SuggestedIngredient, COMMON_ALLERGENS } from '../../lib/openai';
+import { suggestIngredientsForDish, detectAllergens, detectCrossContactRisks, estimateNutrition, NutritionEstimate, SuggestedIngredient, COMMON_ALLERGENS } from '../../lib/openai';
 
 // Helper to format relative time
 function formatTimeAgo(dateString: string): string {
@@ -60,13 +60,45 @@ interface CookingStepInput {
   cross_contact_risk: string[];
 }
 
+interface NutritionFields {
+  calories: string;
+  protein_g: string;
+  carbs_g: string;
+  carbs_fiber_g: string;
+  carbs_sugar_g: string;
+  carbs_added_sugar_g: string;
+  fat_g: string;
+  fat_saturated_g: string;
+  fat_trans_g: string;
+  fat_polyunsaturated_g: string;
+  fat_monounsaturated_g: string;
+  sodium_mg: string;
+  cholesterol_mg: string;
+}
+
+const DEFAULT_NUTRITION_FIELDS: NutritionFields = {
+  calories: '',
+  protein_g: '',
+  carbs_g: '',
+  carbs_fiber_g: '',
+  carbs_sugar_g: '',
+  carbs_added_sugar_g: '',
+  fat_g: '',
+  fat_saturated_g: '',
+  fat_trans_g: '',
+  fat_polyunsaturated_g: '',
+  fat_monounsaturated_g: '',
+  sodium_mg: '',
+  cholesterol_mg: '',
+};
+
 interface DishForm {
   ingredients: SelectedIngredient[];
   preparation: string;
   photoFile: File | null;
   photoUrl: string;
   cookingSteps: CookingStepInput[];
-  calories: string;
+  nutrition: NutritionFields;
 }
 
 export default function DishDetailsInput({ restaurantId, dishes, onComplete }: DishDetailsInputProps) {
@@ -100,9 +132,13 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
   const [detectingCrossContact, setDetectingCrossContact] = useState<number | null>(null);
   const crossContactDebounceRef = useRef<{ [key: number]: NodeJS.Timeout }>({});
 
+  // Calorie estimation state
+  const [estimatingCalories, setEstimatingCalories] = useState(false);
+  const calorieDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
   const currentDish = currentDishIndex !== null ? dishes[currentDishIndex] : null;
   const currentForm = currentDish
-    ? dishForms[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '', cookingSteps: [], calories: '' }
+    ? dishForms[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '', cookingSteps: [], nutrition: DEFAULT_NUTRITION_FIELDS }
     : null;
 
   // Load existing ingredients and recently completed dishes on mount
@@ -133,6 +169,72 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [editingAllergenIndex]);
+
+  // Auto-estimate nutrition when ingredients change
+  useEffect(() => {
+    if (!currentDish || !currentForm) return;
+
+    const ingredients = currentForm.ingredients;
+    const hasIngredientsWithAmounts = ingredients.some(
+      ing => ing.amountValue && ing.amountValue > 0
+    );
+
+    if (!hasIngredientsWithAmounts) return;
+
+    // Clear existing debounce
+    if (calorieDebounceRef.current) {
+      clearTimeout(calorieDebounceRef.current);
+    }
+
+    // Debounce the estimation
+    calorieDebounceRef.current = setTimeout(async () => {
+      setEstimatingCalories(true);
+      try {
+        const estimated = await estimateNutrition(
+          currentDish.name,
+          ingredients
+            .filter(ing => ing.amountValue && ing.amountValue > 0)
+            .map(ing => ({
+              name: ing.name,
+              amount: ing.amountValue,
+              unit: ing.amountUnit,
+            }))
+        );
+
+        setDishForms((prev) => ({
+          ...prev,
+          [currentDish.id]: {
+            ...prev[currentDish.id],
+            nutrition: {
+              calories: estimated.calories?.toString() || '',
+              protein_g: estimated.protein_g?.toString() || '',
+              carbs_g: estimated.carbs_g?.toString() || '',
+              carbs_fiber_g: estimated.carbs_fiber_g?.toString() || '',
+              carbs_sugar_g: estimated.carbs_sugar_g?.toString() || '',
+              carbs_added_sugar_g: estimated.carbs_added_sugar_g?.toString() || '',
+              fat_g: estimated.fat_g?.toString() || '',
+              fat_saturated_g: estimated.fat_saturated_g?.toString() || '',
+              fat_trans_g: estimated.fat_trans_g?.toString() || '',
+              fat_polyunsaturated_g: estimated.fat_polyunsaturated_g?.toString() || '',
+              fat_monounsaturated_g: estimated.fat_monounsaturated_g?.toString() || '',
+              sodium_mg: estimated.sodium_mg?.toString() || '',
+              cholesterol_mg: estimated.cholesterol_mg?.toString() || '',
+            },
+          },
+        }));
+      } catch (err) {
+        console.error('Error estimating nutrition:', err);
+      } finally {
+        setEstimatingCalories(false);
+      }
+    }, 1500); // Wait 1.5 seconds after last change
+
+    return () => {
+      if (calorieDebounceRef.current) {
+        clearTimeout(calorieDebounceRef.current);
+      }
+    };
+  }, [currentDish?.id, currentForm?.ingredients.length, currentForm?.ingredients.map(i => `${i.name}-${i.amountValue}-${i.amountUnit}`).join(',')]);
 
   const loadExistingIngredients = async () => {
     try {
@@ -638,7 +740,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     setDishForms((prev) => ({
       ...prev,
       [currentDish.id]: {
-        ...prev[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '', cookingSteps: [], calories: '' },
+        ...prev[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '', cookingSteps: [], nutrition: DEFAULT_NUTRITION_FIELDS },
         cookingSteps: [
           ...currentSteps,
           {
@@ -804,7 +906,19 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             preparation: currentForm.preparation,
             category: currentDish.category,
             price: currentDish.price,
-            calories: currentForm.calories ? parseInt(currentForm.calories, 10) : null,
+            calories: currentForm.nutrition.calories ? parseInt(currentForm.nutrition.calories, 10) : null,
+            protein_g: currentForm.nutrition.protein_g ? parseFloat(currentForm.nutrition.protein_g) : null,
+            carbs_g: currentForm.nutrition.carbs_g ? parseFloat(currentForm.nutrition.carbs_g) : null,
+            carbs_fiber_g: currentForm.nutrition.carbs_fiber_g ? parseFloat(currentForm.nutrition.carbs_fiber_g) : null,
+            carbs_sugar_g: currentForm.nutrition.carbs_sugar_g ? parseFloat(currentForm.nutrition.carbs_sugar_g) : null,
+            carbs_added_sugar_g: currentForm.nutrition.carbs_added_sugar_g ? parseFloat(currentForm.nutrition.carbs_added_sugar_g) : null,
+            fat_g: currentForm.nutrition.fat_g ? parseFloat(currentForm.nutrition.fat_g) : null,
+            fat_saturated_g: currentForm.nutrition.fat_saturated_g ? parseFloat(currentForm.nutrition.fat_saturated_g) : null,
+            fat_trans_g: currentForm.nutrition.fat_trans_g ? parseFloat(currentForm.nutrition.fat_trans_g) : null,
+            fat_polyunsaturated_g: currentForm.nutrition.fat_polyunsaturated_g ? parseFloat(currentForm.nutrition.fat_polyunsaturated_g) : null,
+            fat_monounsaturated_g: currentForm.nutrition.fat_monounsaturated_g ? parseFloat(currentForm.nutrition.fat_monounsaturated_g) : null,
+            sodium_mg: currentForm.nutrition.sodium_mg ? parseInt(currentForm.nutrition.sodium_mg, 10) : null,
+            cholesterol_mg: currentForm.nutrition.cholesterol_mg ? parseInt(currentForm.nutrition.cholesterol_mg, 10) : null,
             photo_url: photoUrl || undefined,
             updated_at: new Date().toISOString(),
           })
@@ -834,7 +948,19 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             preparation: currentForm.preparation,
             category: currentDish.category,
             price: currentDish.price,
-            calories: currentForm.calories ? parseInt(currentForm.calories, 10) : null,
+            calories: currentForm.nutrition.calories ? parseInt(currentForm.nutrition.calories, 10) : null,
+            protein_g: currentForm.nutrition.protein_g ? parseFloat(currentForm.nutrition.protein_g) : null,
+            carbs_g: currentForm.nutrition.carbs_g ? parseFloat(currentForm.nutrition.carbs_g) : null,
+            carbs_fiber_g: currentForm.nutrition.carbs_fiber_g ? parseFloat(currentForm.nutrition.carbs_fiber_g) : null,
+            carbs_sugar_g: currentForm.nutrition.carbs_sugar_g ? parseFloat(currentForm.nutrition.carbs_sugar_g) : null,
+            carbs_added_sugar_g: currentForm.nutrition.carbs_added_sugar_g ? parseFloat(currentForm.nutrition.carbs_added_sugar_g) : null,
+            fat_g: currentForm.nutrition.fat_g ? parseFloat(currentForm.nutrition.fat_g) : null,
+            fat_saturated_g: currentForm.nutrition.fat_saturated_g ? parseFloat(currentForm.nutrition.fat_saturated_g) : null,
+            fat_trans_g: currentForm.nutrition.fat_trans_g ? parseFloat(currentForm.nutrition.fat_trans_g) : null,
+            fat_polyunsaturated_g: currentForm.nutrition.fat_polyunsaturated_g ? parseFloat(currentForm.nutrition.fat_polyunsaturated_g) : null,
+            fat_monounsaturated_g: currentForm.nutrition.fat_monounsaturated_g ? parseFloat(currentForm.nutrition.fat_monounsaturated_g) : null,
+            sodium_mg: currentForm.nutrition.sodium_mg ? parseInt(currentForm.nutrition.sodium_mg, 10) : null,
+            cholesterol_mg: currentForm.nutrition.cholesterol_mg ? parseInt(currentForm.nutrition.cholesterol_mg, 10) : null,
             photo_url: photoUrl,
             modification_policy: 'Please inform your server of any dietary restrictions.',
             is_active: true,
@@ -1203,26 +1329,288 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             </p>
           </div>
 
-          {/* Calories Field */}
-          <div className="mb-6">
-            <label className="block text-sm font-semibold text-slate-900 mb-2">
-              Calories (Optional)
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                value={currentForm?.calories || ''}
-                onChange={(e) =>
-                  setDishForms((prev) => ({
-                    ...prev,
-                    [currentDish!.id]: { ...currentForm!, calories: e.target.value },
-                  }))
-                }
-                placeholder="e.g., 450"
-                min="0"
-                className="w-32 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-              />
-              <span className="text-sm text-slate-500">kcal per serving</span>
+          {/* Nutrition Information */}
+          <div className="mb-6 bg-slate-50 rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-slate-900">Nutrition Information (Optional)</h3>
+              {estimatingCalories && (
+                <span className="text-xs text-amber-600 flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Estimating from ingredients...
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              AI estimates nutrition based on ingredients. You can adjust any values manually.
+            </p>
+
+            {/* Main Macros Row */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Calories</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    value={currentForm?.nutrition.calories || ''}
+                    onChange={(e) => setDishForms((prev) => ({
+                      ...prev,
+                      [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, calories: e.target.value } },
+                    }))}
+                    placeholder="0"
+                    min="0"
+                    disabled={estimatingCalories}
+                    className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                  />
+                  <span className="text-xs text-slate-400">kcal</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Protein</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={currentForm?.nutrition.protein_g || ''}
+                    onChange={(e) => setDishForms((prev) => ({
+                      ...prev,
+                      [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, protein_g: e.target.value } },
+                    }))}
+                    placeholder="0"
+                    min="0"
+                    disabled={estimatingCalories}
+                    className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                  />
+                  <span className="text-xs text-slate-400">g</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Total Carbs</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={currentForm?.nutrition.carbs_g || ''}
+                    onChange={(e) => setDishForms((prev) => ({
+                      ...prev,
+                      [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, carbs_g: e.target.value } },
+                    }))}
+                    placeholder="0"
+                    min="0"
+                    disabled={estimatingCalories}
+                    className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                  />
+                  <span className="text-xs text-slate-400">g</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Total Fat</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={currentForm?.nutrition.fat_g || ''}
+                    onChange={(e) => setDishForms((prev) => ({
+                      ...prev,
+                      [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, fat_g: e.target.value } },
+                    }))}
+                    placeholder="0"
+                    min="0"
+                    disabled={estimatingCalories}
+                    className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                  />
+                  <span className="text-xs text-slate-400">g</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Carb Details */}
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-slate-500 mb-2">Carbohydrate Details</label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Fiber</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={currentForm?.nutrition.carbs_fiber_g || ''}
+                      onChange={(e) => setDishForms((prev) => ({
+                        ...prev,
+                        [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, carbs_fiber_g: e.target.value } },
+                      }))}
+                      placeholder="0"
+                      min="0"
+                      disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                    />
+                    <span className="text-xs text-slate-400">g</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Sugars</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={currentForm?.nutrition.carbs_sugar_g || ''}
+                      onChange={(e) => setDishForms((prev) => ({
+                        ...prev,
+                        [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, carbs_sugar_g: e.target.value } },
+                      }))}
+                      placeholder="0"
+                      min="0"
+                      disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                    />
+                    <span className="text-xs text-slate-400">g</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Added Sugars</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={currentForm?.nutrition.carbs_added_sugar_g || ''}
+                      onChange={(e) => setDishForms((prev) => ({
+                        ...prev,
+                        [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, carbs_added_sugar_g: e.target.value } },
+                      }))}
+                      placeholder="0"
+                      min="0"
+                      disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                    />
+                    <span className="text-xs text-slate-400">g</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Fat Details */}
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-slate-500 mb-2">Fat Details</label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Saturated</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={currentForm?.nutrition.fat_saturated_g || ''}
+                      onChange={(e) => setDishForms((prev) => ({
+                        ...prev,
+                        [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, fat_saturated_g: e.target.value } },
+                      }))}
+                      placeholder="0"
+                      min="0"
+                      disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                    />
+                    <span className="text-xs text-slate-400">g</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Trans Fat</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={currentForm?.nutrition.fat_trans_g || ''}
+                      onChange={(e) => setDishForms((prev) => ({
+                        ...prev,
+                        [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, fat_trans_g: e.target.value } },
+                      }))}
+                      placeholder="0"
+                      min="0"
+                      disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                    />
+                    <span className="text-xs text-slate-400">g</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Polyunsaturated</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={currentForm?.nutrition.fat_polyunsaturated_g || ''}
+                      onChange={(e) => setDishForms((prev) => ({
+                        ...prev,
+                        [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, fat_polyunsaturated_g: e.target.value } },
+                      }))}
+                      placeholder="0"
+                      min="0"
+                      disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                    />
+                    <span className="text-xs text-slate-400">g</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Monounsaturated</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={currentForm?.nutrition.fat_monounsaturated_g || ''}
+                      onChange={(e) => setDishForms((prev) => ({
+                        ...prev,
+                        [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, fat_monounsaturated_g: e.target.value } },
+                      }))}
+                      placeholder="0"
+                      min="0"
+                      disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                    />
+                    <span className="text-xs text-slate-400">g</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Other Nutrients */}
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-2">Other</label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Sodium</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      value={currentForm?.nutrition.sodium_mg || ''}
+                      onChange={(e) => setDishForms((prev) => ({
+                        ...prev,
+                        [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, sodium_mg: e.target.value } },
+                      }))}
+                      placeholder="0"
+                      min="0"
+                      disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                    />
+                    <span className="text-xs text-slate-400">mg</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Cholesterol</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      value={currentForm?.nutrition.cholesterol_mg || ''}
+                      onChange={(e) => setDishForms((prev) => ({
+                        ...prev,
+                        [currentDish!.id]: { ...currentForm!, nutrition: { ...currentForm!.nutrition, cholesterol_mg: e.target.value } },
+                      }))}
+                      placeholder="0"
+                      min="0"
+                      disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent disabled:bg-slate-100"
+                    />
+                    <span className="text-xs text-slate-400">mg</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 

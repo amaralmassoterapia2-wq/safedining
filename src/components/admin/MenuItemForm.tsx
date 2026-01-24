@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase, Database, WeightUnit, WEIGHT_UNITS } from '../../lib/supabase';
 import { ArrowLeft, Plus, X, AlertCircle, Search, Loader2, Edit3, ChevronDown, ChevronUp, Repeat, Trash2 } from 'lucide-react';
-import { detectAllergens, detectCrossContactRisks, detectAllergensFromDescription, COMMON_ALLERGENS } from '../../lib/openai';
+import { detectAllergens, detectCrossContactRisks, detectAllergensFromDescription, estimateNutrition, NutritionEstimate, COMMON_ALLERGENS } from '../../lib/openai';
 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
 type Ingredient = Database['public']['Tables']['ingredients']['Row'];
@@ -49,7 +49,21 @@ export default function MenuItemForm({
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [category, setCategory] = useState('');
+
+  // Nutrition state
   const [calories, setCalories] = useState('');
+  const [proteinG, setProteinG] = useState('');
+  const [carbsG, setCarbsG] = useState('');
+  const [carbsFiberG, setCarbsFiberG] = useState('');
+  const [carbsSugarG, setCarbsSugarG] = useState('');
+  const [carbsAddedSugarG, setCarbsAddedSugarG] = useState('');
+  const [fatG, setFatG] = useState('');
+  const [fatSaturatedG, setFatSaturatedG] = useState('');
+  const [fatTransG, setFatTransG] = useState('');
+  const [fatPolyunsaturatedG, setFatPolyunsaturatedG] = useState('');
+  const [fatMonounsaturatedG, setFatMonounsaturatedG] = useState('');
+  const [sodiumMg, setSodiumMg] = useState('');
+  const [cholesterolMg, setCholesterolMg] = useState('');
 
   // Ingredients state
   const [ingredients, setIngredients] = useState<IngredientInput[]>([]);
@@ -83,6 +97,10 @@ export default function MenuItemForm({
   const [error, setError] = useState<string | null>(null);
   const [expandedIngredients, setExpandedIngredients] = useState<Set<number>>(new Set());
 
+  // Calorie estimation state
+  const [estimatingCalories, setEstimatingCalories] = useState(false);
+  const calorieDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
   // Load existing ingredients on mount
   useEffect(() => {
     loadExistingIngredients();
@@ -106,6 +124,61 @@ export default function MenuItemForm({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Auto-estimate calories when ingredients change
+  useEffect(() => {
+    const hasIngredientsWithAmounts = ingredients.some(
+      ing => ing.amountValue && ing.amountValue > 0
+    );
+
+    if (!hasIngredientsWithAmounts || !name.trim()) return;
+
+    // Clear existing debounce
+    if (calorieDebounceRef.current) {
+      clearTimeout(calorieDebounceRef.current);
+    }
+
+    // Debounce the estimation
+    calorieDebounceRef.current = setTimeout(async () => {
+      setEstimatingCalories(true);
+      try {
+        const estimated = await estimateNutrition(
+          name,
+          ingredients
+            .filter(ing => ing.amountValue && ing.amountValue > 0)
+            .map(ing => ({
+              name: ing.name,
+              amount: ing.amountValue,
+              unit: ing.amountUnit,
+            }))
+        );
+
+        setCalories(estimated.calories?.toString() || '');
+        setProteinG(estimated.protein_g?.toString() || '');
+        setCarbsG(estimated.carbs_g?.toString() || '');
+        setCarbsFiberG(estimated.carbs_fiber_g?.toString() || '');
+        setCarbsSugarG(estimated.carbs_sugar_g?.toString() || '');
+        setCarbsAddedSugarG(estimated.carbs_added_sugar_g?.toString() || '');
+        setFatG(estimated.fat_g?.toString() || '');
+        setFatSaturatedG(estimated.fat_saturated_g?.toString() || '');
+        setFatTransG(estimated.fat_trans_g?.toString() || '');
+        setFatPolyunsaturatedG(estimated.fat_polyunsaturated_g?.toString() || '');
+        setFatMonounsaturatedG(estimated.fat_monounsaturated_g?.toString() || '');
+        setSodiumMg(estimated.sodium_mg?.toString() || '');
+        setCholesterolMg(estimated.cholesterol_mg?.toString() || '');
+      } catch (err) {
+        console.error('Error estimating nutrition:', err);
+      } finally {
+        setEstimatingCalories(false);
+      }
+    }, 1500);
+
+    return () => {
+      if (calorieDebounceRef.current) {
+        clearTimeout(calorieDebounceRef.current);
+      }
+    };
+  }, [name, ingredients.length, ingredients.map(i => `${i.name}-${i.amountValue}-${i.amountUnit}`).join(',')]);
+
   const loadExistingIngredients = async () => {
     const { data } = await supabase
       .from('ingredients')
@@ -125,8 +198,22 @@ export default function MenuItemForm({
     setDescription(editingItem.description || '');
     setDescriptionAllergens(editingItem.description_allergens || []);
     setPrice(editingItem.price ? editingItem.price.toString() : '');
-    setCalories(editingItem.calories ? editingItem.calories.toString() : '');
     setCategory(editingItem.category || '');
+
+    // Load nutrition data
+    setCalories(editingItem.calories ? editingItem.calories.toString() : '');
+    setProteinG(editingItem.protein_g ? editingItem.protein_g.toString() : '');
+    setCarbsG(editingItem.carbs_g ? editingItem.carbs_g.toString() : '');
+    setCarbsFiberG(editingItem.carbs_fiber_g ? editingItem.carbs_fiber_g.toString() : '');
+    setCarbsSugarG(editingItem.carbs_sugar_g ? editingItem.carbs_sugar_g.toString() : '');
+    setCarbsAddedSugarG(editingItem.carbs_added_sugar_g ? editingItem.carbs_added_sugar_g.toString() : '');
+    setFatG(editingItem.fat_g ? editingItem.fat_g.toString() : '');
+    setFatSaturatedG(editingItem.fat_saturated_g ? editingItem.fat_saturated_g.toString() : '');
+    setFatTransG(editingItem.fat_trans_g ? editingItem.fat_trans_g.toString() : '');
+    setFatPolyunsaturatedG(editingItem.fat_polyunsaturated_g ? editingItem.fat_polyunsaturated_g.toString() : '');
+    setFatMonounsaturatedG(editingItem.fat_monounsaturated_g ? editingItem.fat_monounsaturated_g.toString() : '');
+    setSodiumMg(editingItem.sodium_mg ? editingItem.sodium_mg.toString() : '');
+    setCholesterolMg(editingItem.cholesterol_mg ? editingItem.cholesterol_mg.toString() : '');
 
     // Load ingredients with modification settings and substitutes
     const { data: menuItemIngredients } = await supabase
@@ -542,6 +629,18 @@ export default function MenuItemForm({
         description_allergens: descriptionAllergens,
         price: price ? parseFloat(price) : null,
         calories: calories ? parseInt(calories, 10) : null,
+        protein_g: proteinG ? parseFloat(proteinG) : null,
+        carbs_g: carbsG ? parseFloat(carbsG) : null,
+        carbs_fiber_g: carbsFiberG ? parseFloat(carbsFiberG) : null,
+        carbs_sugar_g: carbsSugarG ? parseFloat(carbsSugarG) : null,
+        carbs_added_sugar_g: carbsAddedSugarG ? parseFloat(carbsAddedSugarG) : null,
+        fat_g: fatG ? parseFloat(fatG) : null,
+        fat_saturated_g: fatSaturatedG ? parseFloat(fatSaturatedG) : null,
+        fat_trans_g: fatTransG ? parseFloat(fatTransG) : null,
+        fat_polyunsaturated_g: fatPolyunsaturatedG ? parseFloat(fatPolyunsaturatedG) : null,
+        fat_monounsaturated_g: fatMonounsaturatedG ? parseFloat(fatMonounsaturatedG) : null,
+        sodium_mg: sodiumMg ? parseInt(sodiumMg, 10) : null,
+        cholesterol_mg: cholesterolMg ? parseInt(cholesterolMg, 10) : null,
         category: category.trim() || null,
         modification_policy: 'See per-ingredient settings', // Deprecated field
         is_active: true,
@@ -769,20 +868,148 @@ export default function MenuItemForm({
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Calories (optional)
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  value={calories}
-                  onChange={(e) => setCalories(e.target.value)}
-                  placeholder="e.g., 450"
-                  min="0"
-                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                />
-                <span className="text-sm text-slate-500 whitespace-nowrap">kcal</span>
+            {/* Nutrition Section - spans full width */}
+            <div className="md:col-span-2 bg-slate-50 rounded-xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-slate-900">Nutrition Information (Optional)</h3>
+                {estimatingCalories && (
+                  <span className="text-xs text-amber-600 flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Estimating from ingredients...
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mb-4">
+                AI estimates nutrition based on ingredients. You can adjust any values manually.
+              </p>
+
+              {/* Main Macros */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Calories</label>
+                  <div className="flex items-center gap-1">
+                    <input type="number" value={calories} onChange={(e) => setCalories(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                    <span className="text-xs text-slate-400">kcal</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Protein</label>
+                  <div className="flex items-center gap-1">
+                    <input type="number" step="0.1" value={proteinG} onChange={(e) => setProteinG(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                    <span className="text-xs text-slate-400">g</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Total Carbs</label>
+                  <div className="flex items-center gap-1">
+                    <input type="number" step="0.1" value={carbsG} onChange={(e) => setCarbsG(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                    <span className="text-xs text-slate-400">g</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Total Fat</label>
+                  <div className="flex items-center gap-1">
+                    <input type="number" step="0.1" value={fatG} onChange={(e) => setFatG(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                    <span className="text-xs text-slate-400">g</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Carb Details */}
+              <div className="mb-4">
+                <label className="block text-xs font-medium text-slate-500 mb-2">Carbohydrate Details</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Fiber</label>
+                    <div className="flex items-center gap-1">
+                      <input type="number" step="0.1" value={carbsFiberG} onChange={(e) => setCarbsFiberG(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                        className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                      <span className="text-xs text-slate-400">g</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Sugars</label>
+                    <div className="flex items-center gap-1">
+                      <input type="number" step="0.1" value={carbsSugarG} onChange={(e) => setCarbsSugarG(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                        className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                      <span className="text-xs text-slate-400">g</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Added Sugars</label>
+                    <div className="flex items-center gap-1">
+                      <input type="number" step="0.1" value={carbsAddedSugarG} onChange={(e) => setCarbsAddedSugarG(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                        className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                      <span className="text-xs text-slate-400">g</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Fat Details */}
+              <div className="mb-4">
+                <label className="block text-xs font-medium text-slate-500 mb-2">Fat Details</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Saturated</label>
+                    <div className="flex items-center gap-1">
+                      <input type="number" step="0.1" value={fatSaturatedG} onChange={(e) => setFatSaturatedG(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                        className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                      <span className="text-xs text-slate-400">g</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Trans Fat</label>
+                    <div className="flex items-center gap-1">
+                      <input type="number" step="0.1" value={fatTransG} onChange={(e) => setFatTransG(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                        className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                      <span className="text-xs text-slate-400">g</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Polyunsaturated</label>
+                    <div className="flex items-center gap-1">
+                      <input type="number" step="0.1" value={fatPolyunsaturatedG} onChange={(e) => setFatPolyunsaturatedG(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                        className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                      <span className="text-xs text-slate-400">g</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Monounsaturated</label>
+                    <div className="flex items-center gap-1">
+                      <input type="number" step="0.1" value={fatMonounsaturatedG} onChange={(e) => setFatMonounsaturatedG(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                        className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                      <span className="text-xs text-slate-400">g</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Other Nutrients */}
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-2">Other</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Sodium</label>
+                    <div className="flex items-center gap-1">
+                      <input type="number" value={sodiumMg} onChange={(e) => setSodiumMg(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                        className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                      <span className="text-xs text-slate-400">mg</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Cholesterol</label>
+                    <div className="flex items-center gap-1">
+                      <input type="number" value={cholesterolMg} onChange={(e) => setCholesterolMg(e.target.value)} placeholder="0" min="0" disabled={estimatingCalories}
+                        className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-slate-100" />
+                      <span className="text-xs text-slate-400">mg</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 

@@ -939,3 +939,170 @@ export async function getMenuItemAllergenSummary(
     summary,
   };
 }
+
+/**
+ * Nutrition estimation types and functions
+ */
+export interface IngredientForNutrition {
+  name: string;
+  amount: number | null;
+  unit: string | null;
+}
+
+export interface NutritionEstimate {
+  calories: number | null;
+  protein_g: number | null;
+  carbs_g: number | null;
+  carbs_fiber_g: number | null;
+  carbs_sugar_g: number | null;
+  carbs_added_sugar_g: number | null;
+  fat_g: number | null;
+  fat_saturated_g: number | null;
+  fat_trans_g: number | null;
+  fat_polyunsaturated_g: number | null;
+  fat_monounsaturated_g: number | null;
+  sodium_mg: number | null;
+  cholesterol_mg: number | null;
+}
+
+const DEFAULT_NUTRITION: NutritionEstimate = {
+  calories: null,
+  protein_g: null,
+  carbs_g: null,
+  carbs_fiber_g: null,
+  carbs_sugar_g: null,
+  carbs_added_sugar_g: null,
+  fat_g: null,
+  fat_saturated_g: null,
+  fat_trans_g: null,
+  fat_polyunsaturated_g: null,
+  fat_monounsaturated_g: null,
+  sodium_mg: null,
+  cholesterol_mg: null,
+};
+
+/**
+ * Estimate full nutrition for a dish based on its ingredients and amounts
+ */
+export async function estimateNutrition(
+  dishName: string,
+  ingredients: IngredientForNutrition[]
+): Promise<NutritionEstimate> {
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
+    return DEFAULT_NUTRITION;
+  }
+
+  // Filter out ingredients without amounts
+  const validIngredients = ingredients.filter(ing => ing.amount && ing.amount > 0);
+  if (validIngredients.length === 0) {
+    return DEFAULT_NUTRITION;
+  }
+
+  const ingredientList = validIngredients
+    .map(ing => `- ${ing.name}: ${ing.amount} ${ing.unit || 'g'}`)
+    .join('\n');
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a nutrition expert. Estimate the complete nutritional information for a dish based on its ingredients and amounts.
+
+Guidelines:
+- Use standard USDA nutritional values for each ingredient
+- Account for cooking methods (e.g., frying adds fat)
+- Round values appropriately (calories to nearest 5, grams to 1 decimal, mg to nearest integer)
+- Be conservative - slightly overestimate unhealthy nutrients
+- Consider typical serving sizes and preparation methods
+
+Return ONLY a valid JSON object with these exact keys (use null if unable to estimate):
+{
+  "calories": <integer>,
+  "protein_g": <number>,
+  "carbs_g": <number>,
+  "carbs_fiber_g": <number>,
+  "carbs_sugar_g": <number>,
+  "carbs_added_sugar_g": <number>,
+  "fat_g": <number>,
+  "fat_saturated_g": <number>,
+  "fat_trans_g": <number>,
+  "fat_polyunsaturated_g": <number>,
+  "fat_monounsaturated_g": <number>,
+  "sodium_mg": <integer>,
+  "cholesterol_mg": <integer>
+}
+
+Notes:
+- carbs_g is TOTAL carbs (includes fiber and sugars)
+- fat_g is TOTAL fat (includes all fat types)
+- carbs_added_sugar_g is sugars added during preparation (not naturally occurring)
+- Return ONLY the JSON, no explanation or markdown.`,
+          },
+          {
+            role: 'user',
+            content: `Dish: ${dishName}
+
+Ingredients:
+${ingredientList}
+
+Estimate the complete nutritional information for one serving. Return only the JSON object.`,
+          },
+        ],
+        max_tokens: 300,
+        temperature: 0.2,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to estimate nutrition:', response.status);
+      return DEFAULT_NUTRITION;
+    }
+
+    const data = await response.json();
+    const content: string = data.choices[0]?.message?.content || '{}';
+
+    // Parse JSON from response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        calories: typeof parsed.calories === 'number' ? Math.round(parsed.calories) : null,
+        protein_g: typeof parsed.protein_g === 'number' ? Math.round(parsed.protein_g * 10) / 10 : null,
+        carbs_g: typeof parsed.carbs_g === 'number' ? Math.round(parsed.carbs_g * 10) / 10 : null,
+        carbs_fiber_g: typeof parsed.carbs_fiber_g === 'number' ? Math.round(parsed.carbs_fiber_g * 10) / 10 : null,
+        carbs_sugar_g: typeof parsed.carbs_sugar_g === 'number' ? Math.round(parsed.carbs_sugar_g * 10) / 10 : null,
+        carbs_added_sugar_g: typeof parsed.carbs_added_sugar_g === 'number' ? Math.round(parsed.carbs_added_sugar_g * 10) / 10 : null,
+        fat_g: typeof parsed.fat_g === 'number' ? Math.round(parsed.fat_g * 10) / 10 : null,
+        fat_saturated_g: typeof parsed.fat_saturated_g === 'number' ? Math.round(parsed.fat_saturated_g * 10) / 10 : null,
+        fat_trans_g: typeof parsed.fat_trans_g === 'number' ? Math.round(parsed.fat_trans_g * 10) / 10 : null,
+        fat_polyunsaturated_g: typeof parsed.fat_polyunsaturated_g === 'number' ? Math.round(parsed.fat_polyunsaturated_g * 10) / 10 : null,
+        fat_monounsaturated_g: typeof parsed.fat_monounsaturated_g === 'number' ? Math.round(parsed.fat_monounsaturated_g * 10) / 10 : null,
+        sodium_mg: typeof parsed.sodium_mg === 'number' ? Math.round(parsed.sodium_mg) : null,
+        cholesterol_mg: typeof parsed.cholesterol_mg === 'number' ? Math.round(parsed.cholesterol_mg) : null,
+      };
+    }
+    return DEFAULT_NUTRITION;
+  } catch (error) {
+    console.error('Error estimating nutrition:', error);
+    return DEFAULT_NUTRITION;
+  }
+}
+
+/**
+ * Estimate calories only (backwards compatibility wrapper)
+ */
+export async function estimateCalories(
+  dishName: string,
+  ingredients: IngredientForNutrition[]
+): Promise<number | null> {
+  const nutrition = await estimateNutrition(dishName, ingredients);
+  return nutrition.calories;
+}
