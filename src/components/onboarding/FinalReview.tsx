@@ -31,6 +31,7 @@ interface MenuItemWithIngredients extends MenuItem {
 interface FinalReviewProps {
   restaurantId: string;
   onBack?: () => void;
+  onComplete?: () => void;
 }
 
 type AllergenSource = 'ingredient' | 'cross-contamination';
@@ -40,7 +41,7 @@ interface EditingAllergen {
   showAddModal: boolean;
 }
 
-export default function FinalReview({ restaurantId, onBack }: FinalReviewProps) {
+export default function FinalReview({ restaurantId, onBack, onComplete }: FinalReviewProps) {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItemWithIngredients[]>([]);
   const [loading, setLoading] = useState(true);
@@ -679,12 +680,12 @@ export default function FinalReview({ restaurantId, onBack }: FinalReviewProps) 
                     </div>
                   </div>
 
-                  <a
-                    href="/admin"
+                  <button
+                    onClick={onComplete}
                     className="block w-full bg-slate-900 text-white py-3 rounded-lg font-semibold hover:bg-slate-800 transition-all text-center"
                   >
                     Go to Dashboard
-                  </a>
+                  </button>
                 </div>
               </div>
             </div>

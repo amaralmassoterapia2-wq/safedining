@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase, Database, WeightUnit, WEIGHT_UNITS } from '../../lib/supabase';
 import { ScannedDish } from '../../pages/RestaurantOnboarding';
-import { Check, Upload, X, ChevronRight, ChevronDown, Plus, Sparkles, Loader2, AlertTriangle, Edit3, Clock, Repeat, Trash2 } from 'lucide-react';
-import { suggestIngredientsForDish, detectAllergens, SuggestedIngredient, COMMON_ALLERGENS } from '../../lib/openai';
+import { Check, Upload, X, ChevronRight, ChevronDown, Plus, Sparkles, Loader2, AlertTriangle, Edit3, Clock, Repeat, Trash2, Search } from 'lucide-react';
+import { suggestIngredientsForDish, detectAllergens, detectCrossContactRisks, SuggestedIngredient, COMMON_ALLERGENS } from '../../lib/openai';
 
 // Helper to format relative time
 function formatTimeAgo(dateString: string): string {
@@ -53,11 +53,20 @@ interface SelectedIngredient {
   substitutes: SubstituteInput[];
 }
 
+interface CookingStepInput {
+  id?: string;
+  step_number: number;
+  description: string;
+  cross_contact_risk: string[];
+}
+
 interface DishForm {
   ingredients: SelectedIngredient[];
   preparation: string;
   photoFile: File | null;
   photoUrl: string;
+  cookingSteps: CookingStepInput[];
+  calories: string;
 }
 
 export default function DishDetailsInput({ restaurantId, dishes, onComplete }: DishDetailsInputProps) {
@@ -87,9 +96,13 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
   const [newSubstituteName, setNewSubstituteName] = useState('');
   const [detectingSubstituteAllergens, setDetectingSubstituteAllergens] = useState(false);
 
+  // Cooking steps state
+  const [detectingCrossContact, setDetectingCrossContact] = useState<number | null>(null);
+  const crossContactDebounceRef = useRef<{ [key: number]: NodeJS.Timeout }>({});
+
   const currentDish = currentDishIndex !== null ? dishes[currentDishIndex] : null;
   const currentForm = currentDish
-    ? dishForms[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '' }
+    ? dishForms[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '', cookingSteps: [], calories: '' }
     : null;
 
   // Load existing ingredients and recently completed dishes on mount
@@ -618,6 +631,107 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     }
   };
 
+  // Cooking steps functions
+  const addCookingStep = () => {
+    if (!currentDish) return;
+    const currentSteps = currentForm?.cookingSteps || [];
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '', cookingSteps: [], calories: '' },
+        cookingSteps: [
+          ...currentSteps,
+          {
+            step_number: currentSteps.length + 1,
+            description: '',
+            cross_contact_risk: [],
+          },
+        ],
+      },
+    }));
+  };
+
+  const removeCookingStep = (index: number) => {
+    if (!currentDish) return;
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id],
+        cookingSteps: (prev[currentDish.id]?.cookingSteps || [])
+          .filter((_, i) => i !== index)
+          .map((step, i) => ({ ...step, step_number: i + 1 })),
+      },
+    }));
+  };
+
+  const updateCookingStep = (index: number, field: keyof CookingStepInput, value: string | string[] | number) => {
+    if (!currentDish) return;
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: {
+        ...prev[currentDish.id],
+        cookingSteps: (prev[currentDish.id]?.cookingSteps || []).map((step, i) =>
+          i === index ? { ...step, [field]: value } : step
+        ),
+      },
+    }));
+
+    // Auto-detect cross-contact risks when description changes
+    if (field === 'description' && typeof value === 'string' && value.trim()) {
+      // Clear existing debounce
+      if (crossContactDebounceRef.current[index]) {
+        clearTimeout(crossContactDebounceRef.current[index]);
+      }
+      // Set new debounce
+      crossContactDebounceRef.current[index] = setTimeout(() => {
+        analyzeCrossContactRisksForStep(index, value);
+      }, 1000);
+    }
+  };
+
+  const analyzeCrossContactRisksForStep = async (index: number, description: string) => {
+    if (!description.trim() || !currentDish) return;
+
+    setDetectingCrossContact(index);
+    try {
+      const detectedRisks = await detectCrossContactRisks(description);
+      if (detectedRisks.length > 0) {
+        // Merge with existing risks, avoiding duplicates
+        setDishForms((prev) => {
+          const step = prev[currentDish.id]?.cookingSteps?.[index];
+          if (!step) return prev;
+          const existingRisks = step.cross_contact_risk || [];
+          const newRisks = [...new Set([...existingRisks, ...detectedRisks])];
+          return {
+            ...prev,
+            [currentDish.id]: {
+              ...prev[currentDish.id],
+              cookingSteps: prev[currentDish.id].cookingSteps.map((s, i) =>
+                i === index ? { ...s, cross_contact_risk: newRisks } : s
+              ),
+            },
+          };
+        });
+      }
+    } catch (err) {
+      console.error('Error detecting cross-contact risks:', err);
+    } finally {
+      setDetectingCrossContact(null);
+    }
+  };
+
+  const analyzeCrossContactRisks = async (index: number) => {
+    const step = currentForm?.cookingSteps?.[index];
+    if (!step?.description.trim()) return;
+    await analyzeCrossContactRisksForStep(index, step.description);
+  };
+
+  const removeCrossContactRisk = (stepIndex: number, allergen: string) => {
+    if (!currentDish || !currentForm) return;
+    const step = currentForm.cookingSteps[stepIndex];
+    updateCookingStep(stepIndex, 'cross_contact_risk', step.cross_contact_risk.filter(r => r !== allergen));
+  };
+
   const handleSaveDish = async () => {
     if (!currentDish || !currentForm) return;
 
@@ -690,6 +804,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             preparation: currentForm.preparation,
             category: currentDish.category,
             price: currentDish.price,
+            calories: currentForm.calories ? parseInt(currentForm.calories, 10) : null,
             photo_url: photoUrl || undefined,
             updated_at: new Date().toISOString(),
           })
@@ -700,6 +815,12 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
         // Delete existing menu_item_ingredients for this item
         await supabase
           .from('menu_item_ingredients')
+          .delete()
+          .eq('menu_item_id', menuItemId);
+
+        // Delete existing cooking_steps for this item
+        await supabase
+          .from('cooking_steps')
           .delete()
           .eq('menu_item_id', menuItemId);
       } else {
@@ -713,6 +834,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             preparation: currentForm.preparation,
             category: currentDish.category,
             price: currentDish.price,
+            calories: currentForm.calories ? parseInt(currentForm.calories, 10) : null,
             photo_url: photoUrl,
             modification_policy: 'Please inform your server of any dietary restrictions.',
             is_active: true,
@@ -824,6 +946,29 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                 });
               }
             }
+          }
+        }
+      }
+
+      // Save cooking steps
+      const cookingSteps = currentForm.cookingSteps || [];
+      if (cookingSteps.length > 0) {
+        const stepsToInsert = cookingSteps
+          .filter((step) => step.description.trim())
+          .map((step) => ({
+            menu_item_id: menuItemId,
+            step_number: step.step_number,
+            description: step.description,
+            cross_contact_risk: step.cross_contact_risk,
+          }));
+
+        if (stepsToInsert.length > 0) {
+          const { error: stepError } = await supabase
+            .from('cooking_steps')
+            .insert(stepsToInsert);
+
+          if (stepError) {
+            console.error('Error saving cooking steps:', stepError);
           }
         }
       }
@@ -1058,6 +1203,29 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             </p>
           </div>
 
+          {/* Calories Field */}
+          <div className="mb-6">
+            <label className="block text-sm font-semibold text-slate-900 mb-2">
+              Calories (Optional)
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={currentForm?.calories || ''}
+                onChange={(e) =>
+                  setDishForms((prev) => ({
+                    ...prev,
+                    [currentDish!.id]: { ...currentForm!, calories: e.target.value },
+                  }))
+                }
+                placeholder="e.g., 450"
+                min="0"
+                className="w-32 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+              />
+              <span className="text-sm text-slate-500">kcal per serving</span>
+            </div>
+          </div>
+
           <div className="space-y-6">
             {/* Ingredients Section */}
             <div>
@@ -1110,7 +1278,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                     return (
                       <div
                         key={index}
-                        className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden"
+                        className="bg-slate-50 rounded-xl border border-slate-200 relative"
                       >
                         {/* Main ingredient row */}
                         <div className="p-3 flex items-center gap-3">
@@ -1205,7 +1373,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                       {editingAllergenIndex === index && (
                         <div
                           ref={allergenEditorRef}
-                          className="absolute left-0 top-full mt-1 z-10 bg-white border border-slate-200 rounded-xl shadow-lg p-3 w-80 max-h-80 overflow-y-auto"
+                          className="absolute left-0 top-full mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-lg p-3 w-80"
                         >
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-sm font-semibold text-slate-900">Edit Allergens</span>
@@ -1528,6 +1696,137 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                 className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent resize-y min-h-[150px]"
                 placeholder="Describe how this dish is prepared..."
               />
+            </div>
+
+            {/* Cooking Steps Section (Optional) */}
+            <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-slate-900">Cooking Steps (Optional)</h3>
+                  <p className="text-xs text-slate-500 mt-1">Add step-by-step cooking instructions with cross-contact risk tracking</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={addCookingStep}
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Step
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {(currentForm?.cookingSteps || []).map((step, index) => (
+                  <div key={index} className="p-4 bg-white border border-slate-200 rounded-lg space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-shrink-0 w-8 h-8 bg-slate-900 text-white rounded-full flex items-center justify-center font-semibold text-sm">
+                        {step.step_number}
+                      </div>
+                      <div className="flex-1 relative">
+                        <textarea
+                          value={step.description}
+                          onChange={(e) => updateCookingStep(index, 'description', e.target.value)}
+                          placeholder="Describe this cooking step (e.g., 'Fried in shared oil with shrimp')"
+                          rows={2}
+                          disabled={detectingCrossContact === index}
+                          className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent resize-none transition-colors ${
+                            detectingCrossContact === index
+                              ? 'bg-amber-50 border-amber-300 text-slate-500'
+                              : 'border-slate-300'
+                          }`}
+                        />
+                        {detectingCrossContact === index && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-amber-50/80 rounded-lg">
+                            <div className="flex items-center gap-2 text-amber-700">
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                              <span className="text-sm font-medium">Analyzing cross-contact risks...</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeCookingStep(index)}
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-xs font-medium text-slate-700">
+                          Cross-Contact Risks:
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => analyzeCrossContactRisks(index)}
+                          disabled={!step.description.trim() || detectingCrossContact === index}
+                          className="text-xs text-amber-600 hover:text-amber-700 flex items-center gap-1 disabled:opacity-50"
+                        >
+                          {detectingCrossContact === index ? (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Analyzing...
+                            </>
+                          ) : (
+                            <>
+                              <Search className="w-3 h-3" />
+                              AI Detect Risks
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Selected cross-contact risks as removable tags */}
+                      {step.cross_contact_risk.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {step.cross_contact_risk.map((risk) => (
+                            <span
+                              key={risk}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-800 text-xs font-medium rounded-full"
+                            >
+                              {risk}
+                              <button
+                                type="button"
+                                onClick={() => removeCrossContactRisk(index, risk)}
+                                className="p-0.5 hover:bg-amber-200 rounded-full transition-colors"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Add more risks manually */}
+                      <div className="flex flex-wrap gap-2">
+                        {COMMON_ALLERGENS.filter(a => !step.cross_contact_risk.includes(a)).map((allergen) => (
+                          <button
+                            key={allergen}
+                            type="button"
+                            onClick={() => {
+                              updateCookingStep(index, 'cross_contact_risk', [...step.cross_contact_risk, allergen]);
+                            }}
+                            className="px-2 py-1 text-xs bg-slate-100 text-slate-600 rounded-full hover:bg-amber-100 hover:text-amber-700 transition-colors"
+                          >
+                            + {allergen}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-2">
+                        Click to add risks, or let AI detect them from the step description
+                      </p>
+                    </div>
+                  </div>
+                ))}
+
+                {(!currentForm?.cookingSteps || currentForm.cookingSteps.length === 0) && (
+                  <p className="text-sm text-slate-500 text-center py-4">
+                    No cooking steps added yet. Click "Add Step" to start.
+                  </p>
+                )}
+              </div>
             </div>
 
             {/* Photo Section */}

@@ -90,6 +90,7 @@ export type Database = {
           description: string | null;
           description_allergens: string[];
           price: number | null;
+          calories: number | null;
           category: string | null;
           preparation: string | null;
           modification_policy: string;
@@ -104,6 +105,7 @@ export type Database = {
           description?: string | null;
           description_allergens?: string[];
           price?: number | null;
+          calories?: number | null;
           category?: string | null;
           preparation?: string | null;
           modification_policy: string;
@@ -118,6 +120,7 @@ export type Database = {
           description?: string | null;
           description_allergens?: string[];
           price?: number | null;
+          calories?: number | null;
           category?: string | null;
           preparation?: string | null;
           modification_policy?: string;

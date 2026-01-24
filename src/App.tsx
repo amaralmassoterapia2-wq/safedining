@@ -125,7 +125,12 @@ function AppContent() {
     }
 
     if (restaurantView === 'onboarding' && restaurantId) {
-      return <RestaurantOnboarding restaurantId={restaurantId} />;
+      return (
+        <RestaurantOnboarding
+          restaurantId={restaurantId}
+          onComplete={() => setRestaurantView('dashboard')}
+        />
+      );
     }
 
     if (restaurantView === 'dashboard') {

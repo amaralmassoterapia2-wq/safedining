@@ -19,6 +19,8 @@ export const COMMON_ALLERGENS = [
   'Lupin',
   'Mollusks',
   'Sulfites',
+  'Onion',
+  'Garlic',
 ] as const;
 
 // Comprehensive allergen mapping reference for AI prompts
@@ -86,8 +88,15 @@ SULFITES:
 - Direct: sulfur dioxide, sodium sulfite, sodium bisulfite
 - Found in: wine, dried fruits, some seafood, pickled foods, grape juice
 
+ONION:
+- Direct: onion, onion powder, dried onion, shallots, scallions/green onions, leeks, chives
+- Hidden: many soups, stocks, sauces, seasonings, French onion dip, onion rings
+
+GARLIC:
+- Direct: garlic, garlic powder, garlic salt, minced garlic, roasted garlic
+- Hidden: many sauces, marinades, seasoning blends, garlic bread, aioli, pesto
+
 SPECIAL NOTES:
-- Onion and garlic are NOT major allergens but can affect people with FODMAP sensitivities
 - Nightshades (tomatoes, peppers, eggplant, potatoes) are not major allergens but some people are sensitive
 - Corn is not a major allergen but can cause reactions in some people
 `;

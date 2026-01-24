@@ -49,6 +49,7 @@ export default function MenuItemForm({
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [category, setCategory] = useState('');
+  const [calories, setCalories] = useState('');
 
   // Ingredients state
   const [ingredients, setIngredients] = useState<IngredientInput[]>([]);
@@ -124,6 +125,7 @@ export default function MenuItemForm({
     setDescription(editingItem.description || '');
     setDescriptionAllergens(editingItem.description_allergens || []);
     setPrice(editingItem.price ? editingItem.price.toString() : '');
+    setCalories(editingItem.calories ? editingItem.calories.toString() : '');
     setCategory(editingItem.category || '');
 
     // Load ingredients with modification settings and substitutes
@@ -539,6 +541,7 @@ export default function MenuItemForm({
         description: description.trim() || null,
         description_allergens: descriptionAllergens,
         price: price ? parseFloat(price) : null,
+        calories: calories ? parseInt(calories, 10) : null,
         category: category.trim() || null,
         modification_policy: 'See per-ingredient settings', // Deprecated field
         is_active: true,
@@ -764,6 +767,23 @@ export default function MenuItemForm({
                 placeholder="0.00"
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Calories (optional)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  value={calories}
+                  onChange={(e) => setCalories(e.target.value)}
+                  placeholder="e.g., 450"
+                  min="0"
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                />
+                <span className="text-sm text-slate-500 whitespace-nowrap">kcal</span>
+              </div>
             </div>
 
             <div className="md:col-span-2">

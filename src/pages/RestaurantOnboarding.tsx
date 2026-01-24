@@ -18,9 +18,10 @@ export interface ScannedDish {
 
 interface RestaurantOnboardingProps {
   restaurantId: string;
+  onComplete?: () => void;
 }
 
-export default function RestaurantOnboarding({ restaurantId }: RestaurantOnboardingProps) {
+export default function RestaurantOnboarding({ restaurantId, onComplete }: RestaurantOnboardingProps) {
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('loading');
   const [scannedDishes, setScannedDishes] = useState<ScannedDish[]>([]);
 
@@ -90,7 +91,7 @@ export default function RestaurantOnboarding({ restaurantId }: RestaurantOnboard
         />
       )}
       {currentStep === 'review' && restaurantId && (
-        <FinalReview restaurantId={restaurantId} onBack={handleBackToDetails} />
+        <FinalReview restaurantId={restaurantId} onBack={handleBackToDetails} onComplete={onComplete} />
       )}
     </div>
   );
