@@ -23,11 +23,24 @@ function AppContent() {
 
   useEffect(() => {
     const path = window.location.pathname;
+    const searchParams = new URLSearchParams(window.location.search);
 
+    // Handle /menu/CODE format
     if (path.startsWith('/menu/')) {
       const code = path.split('/menu/')[1];
       if (code) {
         setQrCode(code);
+        setGuestView('dietary-setup');
+        setUserMode('guest');
+      }
+    }
+    // Handle /?qr=CODE format (from QR code share links)
+    else if (searchParams.has('qr')) {
+      const code = searchParams.get('qr');
+      if (code) {
+        setQrCode(code);
+        // Update URL to cleaner format
+        window.history.replaceState({}, '', `/menu/${code}`);
         setGuestView('dietary-setup');
         setUserMode('guest');
       }
