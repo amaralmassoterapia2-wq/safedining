@@ -657,16 +657,31 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       }
 
       // Check if menu item exists (for update case)
-      const { data: existingItem } = await supabase
+      // First try by ID, then by name + restaurant to handle re-saves
+      let existingItem = await supabase
         .from('menu_items')
         .select('id')
         .eq('id', currentDish.id)
-        .maybeSingle();
+        .maybeSingle()
+        .then(res => res.data);
+
+      // If not found by ID, check by name + restaurant (handles case where dish was saved with new DB id)
+      if (!existingItem) {
+        existingItem = await supabase
+          .from('menu_items')
+          .select('id')
+          .eq('restaurant_id', restaurantId)
+          .eq('name', currentDish.name)
+          .maybeSingle()
+          .then(res => res.data);
+      }
 
       let menuItemId: string;
 
       if (existingItem) {
-        // Update existing menu item
+        // Update existing menu item using the database ID
+        menuItemId = existingItem.id;
+
         const { error: updateError } = await supabase
           .from('menu_items')
           .update({
@@ -678,10 +693,9 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             photo_url: photoUrl || undefined,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', currentDish.id);
+          .eq('id', menuItemId);
 
         if (updateError) throw updateError;
-        menuItemId = currentDish.id;
 
         // Delete existing menu_item_ingredients for this item
         await supabase
