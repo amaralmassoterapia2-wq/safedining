@@ -1526,32 +1526,38 @@ export async function analyzeMenuPhoto(
         messages: [
           {
             role: 'system',
-            content: `You are a menu OCR expert. Your job is to read menu images and extract food/dish names.
+            content: `You are a menu OCR expert. Extract dish names with ACCURATE pixel-level positions.
 
-TASK: Look at this menu image and find ALL food items, dishes, and beverages listed.
+CRITICAL TASK: Read the menu and provide the EXACT location of each dish name.
 
-For EACH item found, provide:
-1. name: The dish/item name as written (e.g., "Caesar Salad", "Grilled Chicken", "Margherita Pizza")
-2. boundingBox: Approximate position as percentages (0-100) where x,y is top-left corner
-3. confidence: How sure you are this is a menu item (0-100)
-4. price: The price if visible (e.g., "$12.99")
+For EACH dish found, you MUST provide:
+1. name: Dish name as written
+2. boundingBox: The ACTUAL position of this specific dish name on the menu
+   - x: How far from the LEFT edge (as % of image width, 0-100) - WHERE DOES THIS TEXT START?
+   - y: How far from the TOP edge (as % of image height, 0-100) - WHAT ROW IS THIS TEXT ON?
+   - width/height: Approximate size of text
+3. confidence: 0-100
+4. price: If visible
 
-RULES:
-- Extract EVERY food/drink item you can see
-- Include appetizers, mains, desserts, drinks, sides - everything edible
-- Include items even if you can only partially read them
-- Ignore section headers like "APPETIZERS" or "MAIN COURSES" - only include actual dish names
-- Ignore restaurant name, addresses, hours
-- Approximate the bounding box - it doesn't need to be perfect
-- If the menu is handwritten, do your best to read it
-- If text is unclear, provide your best guess with lower confidence
+POSITION ACCURACY IS CRITICAL:
+- Each dish has a UNIQUE y position based on which LINE it's on
+- Do NOT use evenly spaced values - measure ACTUAL positions
+- First item might be at y=12, next at y=18, then y=31, etc. - NOT evenly spaced!
+- Look at WHERE each dish name actually appears on the menu
+- If dishes are close together, their y values will be close (e.g., y=25 and y=28)
+- If there's a gap, y values will have a gap too
 
-CRITICAL: You MUST find menu items. Even a simple menu has at least a few items. If you truly cannot read ANY text, say so, but try your best first.
+EXAMPLE for a menu with items at different spacings:
+- "Soup of the Day" at top-left: x=8, y=15
+- "House Salad" right below it: x=8, y=19
+- "Caesar Salad" with gap after: x=8, y=24
+- "Grilled Salmon" in new section: x=8, y=38
+- "Pasta Primavera" below that: x=8, y=43
 
 Return ONLY valid JSON:
 {
   "items": [
-    {"name": "Dish Name", "boundingBox": {"x": 10, "y": 20, "width": 30, "height": 5}, "confidence": 95, "price": "$12.99"}
+    {"name": "Dish Name", "boundingBox": {"x": 8, "y": 15, "width": 20, "height": 3}, "confidence": 95, "price": "$12.99"}
   ]
 }`,
           },
@@ -1560,7 +1566,7 @@ Return ONLY valid JSON:
             content: [
               {
                 type: 'text',
-                text: 'Read this menu image and extract all dish/food item names. Find every food or drink item listed.',
+                text: 'Read this menu and extract all dish names with their EXACT positions. Each dish appears at a specific location - provide the actual x,y coordinates where each dish name appears. Do NOT use evenly-spaced positions.',
               },
               {
                 type: 'image_url',
@@ -1615,19 +1621,26 @@ Return ONLY valid JSON:
             boundingBox?: { x?: number; y?: number; width?: number; height?: number };
             confidence?: number;
             price?: string;
-          }, index: number) => ({
-            name: String(item.name || '').trim(),
-            boundingBox: {
-              x: typeof item.boundingBox?.x === 'number' ? item.boundingBox.x : 5 + (index % 2) * 45,
-              y: typeof item.boundingBox?.y === 'number' ? item.boundingBox.y : 10 + Math.floor(index / 2) * 8,
-              width: typeof item.boundingBox?.width === 'number' ? item.boundingBox.width : 40,
-              height: typeof item.boundingBox?.height === 'number' ? item.boundingBox.height : 6,
-            },
-            confidence: typeof item.confidence === 'number' ? item.confidence : 70,
-            price: item.price,
-          }));
+          }) => {
+            // Log each item's raw position data for debugging
+            console.log(`Item: "${item.name}" - Raw position:`, item.boundingBox);
 
-        console.log(`Detected ${detectedItems.length} menu items`);
+            return {
+              name: String(item.name || '').trim(),
+              boundingBox: {
+                // Use exact positions from OpenAI - no fallback grid pattern
+                x: typeof item.boundingBox?.x === 'number' ? item.boundingBox.x : 5,
+                y: typeof item.boundingBox?.y === 'number' ? item.boundingBox.y : 5,
+                width: typeof item.boundingBox?.width === 'number' ? item.boundingBox.width : 30,
+                height: typeof item.boundingBox?.height === 'number' ? item.boundingBox.height : 4,
+              },
+              confidence: typeof item.confidence === 'number' ? item.confidence : 70,
+              price: item.price,
+            };
+          });
+
+        console.log(`Detected ${detectedItems.length} menu items with positions:`,
+          detectedItems.map(d => ({ name: d.name, x: d.boundingBox.x, y: d.boundingBox.y })));
 
         return {
           detectedItems,

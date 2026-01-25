@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Camera, X, RefreshCw, CheckCircle, AlertCircle, XCircle, ChevronDown, Shield } from 'lucide-react';
+import { Camera, X, RefreshCw, CheckCircle, AlertCircle, XCircle, Shield } from 'lucide-react';
 import { analyzeMenuPhoto, fuzzyMatchScore, findBestMatch, DetectedMenuItem } from '../../lib/openai';
 import { analyzeDishSafety } from '../../lib/safetyAnalysis';
 import { supabase, Database } from '../../lib/supabase';
@@ -52,7 +52,6 @@ export default function InteractiveMenuPhoto({
   const [matchedItems, setMatchedItems] = useState<MatchedItem[]>([]);
   const [dbDishes, setDbDishes] = useState<MenuItemWithData[]>([]);
   const [selectedDish, setSelectedDish] = useState<MenuItemWithData | null>(null);
-  const [showLegend, setShowLegend] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -247,27 +246,14 @@ export default function InteractiveMenuPhoto({
     }
   };
 
-  const getSafetyColor = (status: MatchedItem['safetyStatus']) => {
-    switch (status) {
-      case 'safe':
-        return 'border-green-500 bg-green-500/20';
-      case 'safe-with-modifications':
-        return 'border-amber-500 bg-amber-500/20';
-      case 'unsafe':
-        return 'border-red-500 bg-red-500/20';
-      default:
-        return 'border-slate-400 bg-slate-400/20';
-    }
-  };
-
   const getSafetyIcon = (status: MatchedItem['safetyStatus']) => {
     switch (status) {
       case 'safe':
-        return <CheckCircle className="w-4 h-4 text-green-500" />;
+        return <CheckCircle className="w-3 h-3 text-green-300" />;
       case 'safe-with-modifications':
-        return <AlertCircle className="w-4 h-4 text-amber-500" />;
+        return <AlertCircle className="w-3 h-3 text-amber-300" />;
       case 'unsafe':
-        return <XCircle className="w-4 h-4 text-red-500" />;
+        return <XCircle className="w-3 h-3 text-red-300" />;
       default:
         return null;
     }
@@ -404,92 +390,109 @@ export default function InteractiveMenuPhoto({
         )}
 
         {step === 'result' && capturedImage && (
-          <div className="h-full flex flex-col">
-            {/* Legend */}
-            {showLegend && customerAllergens.length > 0 && (
-              <div className="bg-slate-800/95 backdrop-blur-sm border-b border-slate-700 px-4 py-3">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <Shield className="w-4 h-4 text-emerald-400" />
-                    <span className="text-sm font-medium text-white">Safety Legend</span>
-                  </div>
-                  <button
-                    onClick={() => setShowLegend(false)}
-                    className="text-xs text-slate-400 hover:text-slate-200"
-                  >
-                    Hide
-                  </button>
-                </div>
-                <div className="flex flex-wrap gap-3 text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded border-2 border-green-500 bg-green-500/30" />
-                    <span className="text-slate-300">Safe</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded border-2 border-amber-500 bg-amber-500/30" />
-                    <span className="text-slate-300">Modifiable</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded border-2 border-red-500 bg-red-500/30" />
-                    <span className="text-slate-300">Contains Allergens</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded border-2 border-slate-400 bg-slate-400/30" />
-                    <span className="text-slate-300">Not in database</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Interactive Image */}
-            <div className="flex-1 relative overflow-auto">
-              <div className="relative inline-block min-w-full">
+          <div className="h-full flex flex-col overflow-hidden">
+            {/* Menu container with proper scaling */}
+            <div className="flex-1 overflow-auto bg-black flex items-start justify-center">
+              <div className="relative" style={{ maxHeight: 'calc(100vh - 180px)', width: 'fit-content' }}>
+                {/* Menu Image - Scaled to fit screen */}
                 <img
                   src={capturedImage}
                   alt="Captured menu"
-                  className="max-w-full h-auto"
+                  className="h-auto max-h-[calc(100vh-180px)] w-auto max-w-full object-contain"
                 />
 
-                {/* Overlays for matched items */}
-                {matchedItems.map((item, index) => (
-                  <button
-                    key={index}
-                    onClick={() => item.dbDish && setSelectedDish(item.dbDish)}
-                    disabled={!item.dbDish}
-                    className={`absolute border-2 rounded-lg transition-all ${getSafetyColor(item.safetyStatus)} ${
-                      item.dbDish ? 'cursor-pointer hover:scale-105' : 'cursor-default opacity-50'
-                    }`}
-                    style={{
-                      left: `${item.detected.boundingBox.x}%`,
-                      top: `${item.detected.boundingBox.y}%`,
-                      width: `${item.detected.boundingBox.width}%`,
-                      minWidth: '80px',
-                      minHeight: '30px',
-                    }}
-                    title={item.dbDish ? `${item.dbDish.name} (${item.matchScore}% match)` : item.detected.name}
-                  >
-                    <div className="absolute -top-6 left-0 flex items-center gap-1 bg-slate-900/90 px-2 py-0.5 rounded text-xs whitespace-nowrap">
-                      {getSafetyIcon(item.safetyStatus)}
-                      <span className="text-white font-medium truncate max-w-[120px]">
-                        {item.dbDish?.name || item.detected.name}
-                      </span>
-                      {item.dbDish && (
-                        <ChevronDown className="w-3 h-3 text-slate-400" />
-                      )}
+                {/* Info Cards Overlaid on Menu */}
+                {matchedItems.map((item, index) => {
+                  const dish = item.dbDish;
+                  const allergens = dish?.ingredients
+                    ?.flatMap(ing => ing.contains_allergens || [])
+                    .filter((a, i, arr) => arr.indexOf(a) === i) || [];
+                  const dangerousAllergens = allergens.filter(a =>
+                    customerAllergens.some(ca => a.toLowerCase().includes(ca.toLowerCase()) || ca.toLowerCase().includes(a.toLowerCase()))
+                  );
+
+                  const bgColor = item.safetyStatus === 'safe' ? 'bg-green-700' :
+                    item.safetyStatus === 'safe-with-modifications' ? 'bg-amber-700' :
+                    item.safetyStatus === 'unsafe' ? 'bg-red-700' :
+                    'bg-slate-800';
+
+                  return (
+                    <div
+                      key={index}
+                      onClick={() => dish && setSelectedDish(dish)}
+                      className={`absolute ${bgColor} rounded shadow-lg cursor-pointer hover:brightness-110 transition-all border-l-4 border-white/50`}
+                      style={{
+                        left: `${item.detected.boundingBox.x}%`,
+                        top: `${item.detected.boundingBox.y}%`,
+                        transform: 'translate(0, -50%)',
+                        maxWidth: '140px',
+                        zIndex: 10 + index,
+                      }}
+                    >
+                      {/* Compact Card Content */}
+                      <div className="px-1.5 py-1">
+                        {/* Name Row */}
+                        <div className="flex items-center gap-1">
+                          <span className="w-3 h-3 flex-shrink-0">{getSafetyIcon(item.safetyStatus)}</span>
+                          <span className="font-semibold text-white text-xs leading-tight truncate">
+                            {dish?.name || item.detected.name}
+                          </span>
+                        </div>
+
+                        {dish ? (
+                          <div className="mt-0.5 space-y-0.5">
+                            {/* Calories & Macros - Single Line */}
+                            <div className="flex items-center gap-1 text-[10px] text-white/90">
+                              {dish.calories && <span className="font-medium">{dish.calories}cal</span>}
+                              {dish.protein_g && <span>P{dish.protein_g}</span>}
+                              {dish.carbs_g && <span>C{dish.carbs_g}</span>}
+                              {dish.fat_g && <span>F{dish.fat_g}</span>}
+                            </div>
+
+                            {/* Allergens - Compact */}
+                            {allergens.length > 0 && (
+                              <div className="flex flex-wrap gap-0.5">
+                                {allergens.slice(0, 2).map((allergen, i) => {
+                                  const isDangerous = dangerousAllergens.includes(allergen);
+                                  return (
+                                    <span
+                                      key={i}
+                                      className={`text-[9px] px-1 rounded ${
+                                        isDangerous
+                                          ? 'bg-red-900 text-red-200 font-medium'
+                                          : 'bg-black/40 text-white/70'
+                                      }`}
+                                    >
+                                      {isDangerous && '⚠'}{allergen}
+                                    </span>
+                                  );
+                                })}
+                                {allergens.length > 2 && (
+                                  <span className="text-[9px] text-white/50">+{allergens.length - 2}</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-[9px] text-white/60">Not in DB</span>
+                        )}
+                      </div>
+
                     </div>
-                  </button>
-                ))}
+                  );
+                })}
+
               </div>
             </div>
 
             {/* Bottom Actions */}
-            <div className="p-4 bg-slate-800 border-t border-slate-700 flex gap-3">
+            <div className="p-4 bg-slate-800 border-t border-slate-700 flex gap-3 flex-shrink-0">
               <button
                 onClick={retakePhoto}
                 className="flex-1 bg-slate-700 text-slate-200 py-3 rounded-xl font-medium flex items-center justify-center gap-2"
               >
                 <RefreshCw className="w-5 h-5" />
-                Retake Photo
+                Retake
               </button>
               <button
                 onClick={onClose}
