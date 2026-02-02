@@ -1,13 +1,10 @@
 import { useEffect, useState } from 'react';
 import { supabase, Database } from '../lib/supabase';
 import { getOrCreateSessionId } from '../lib/customerSession';
-import { Settings, Shield, ChevronRight, AlertCircle, CheckCircle, XCircle, Camera, List } from 'lucide-react';
+import { Settings, Shield, ChevronRight, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
 import BottomSheet from '../components/common/BottomSheet';
 import DishDetail from '../components/customer/DishDetail';
-import InteractiveMenuPhoto from '../components/customer/InteractiveMenuPhoto';
 import { analyzeDishSafety } from '../lib/safetyAnalysis';
-
-type CustomerTab = 'scan' | 'list';
 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
 type Ingredient = Database['public']['Tables']['ingredients']['Row'];
@@ -43,8 +40,6 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
   const [loading, setLoading] = useState(true);
   const [selectedDish, setSelectedDish] = useState<MenuItemWithData | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<CustomerTab>('scan');
-  const [hasScannedMenu, setHasScannedMenu] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -206,16 +201,6 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
     ? menuItems
     : menuItems.filter((item) => item.category === filterCategory);
 
-  const handleMenuScanned = () => {
-    setHasScannedMenu(true);
-  };
-
-  const handleSwitchToList = () => {
-    if (hasScannedMenu) {
-      setActiveTab('list');
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       {/* Header */}
@@ -245,60 +230,9 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
         </div>
       </header>
 
-      {/* Tab Navigation */}
-      <div className="bg-slate-800/80 border-b border-slate-700">
-        <div className="max-w-4xl mx-auto px-4">
-          <div className="flex">
-            <button
-              onClick={() => setActiveTab('scan')}
-              className={`flex-1 py-4 px-4 flex items-center justify-center gap-2 font-medium text-sm transition-all border-b-2 ${
-                activeTab === 'scan'
-                  ? 'border-emerald-500 text-white bg-emerald-500/10'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Camera className="w-5 h-5" />
-              Scan Menu
-            </button>
-            <button
-              onClick={handleSwitchToList}
-              disabled={!hasScannedMenu}
-              className={`flex-1 py-4 px-4 flex items-center justify-center gap-2 font-medium text-sm transition-all border-b-2 ${
-                activeTab === 'list'
-                  ? 'border-emerald-500 text-white bg-emerald-500/10'
-                  : hasScannedMenu
-                    ? 'border-transparent text-slate-400 hover:text-slate-200'
-                    : 'border-transparent text-slate-600 cursor-not-allowed'
-              }`}
-            >
-              <List className="w-5 h-5" />
-              Full Menu
-              {!hasScannedMenu && (
-                <span className="text-xs bg-slate-700 px-2 py-0.5 rounded-full">
-                  Scan first
-                </span>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Tab Content */}
-      {activeTab === 'scan' ? (
-        <div className="flex-1">
-          <InteractiveMenuPhoto
-            restaurantId={restaurant.id}
-            customerAllergens={customerAllergens}
-            onClose={() => {
-              handleMenuScanned();
-              setActiveTab('list');
-            }}
-            embedded={true}
-          />
-        </div>
-      ) : (
-        <>
-          {/* Allergen Alert Banner - only on list tab */}
+      {/* Menu Content */}
+      <>
+        {/* Allergen Alert Banner */}
           {customerAllergens.length > 0 && (
             <div className="max-w-4xl mx-auto px-4 pt-4">
               <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
@@ -405,8 +339,7 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
               </div>
             )}
           </main>
-        </>
-      )}
+      </>
 
       <BottomSheet
         isOpen={!!selectedDish}

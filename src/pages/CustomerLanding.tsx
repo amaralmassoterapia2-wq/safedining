@@ -197,7 +197,7 @@ export default function CustomerLanding({ onQrCodeEntered, onSwitchToRestaurantM
         </button>
 
         <p className="text-center text-slate-400 text-sm mt-4">
-          Enter the code, then snap a photo of the menu
+          Enter the code to view the menu
         </p>
       </div>
 

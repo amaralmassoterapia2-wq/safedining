@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { LogOut, QrCode, Plus, BarChart3, X, Download, Copy, Check } from 'lucide-react';
+import { LogOut, QrCode, Plus, BarChart3, X, Download, Copy, Check, FileSpreadsheet } from 'lucide-react';
+import { exportMenuToCSV } from '../lib/exportMenu';
 import RestaurantSetup from '../components/admin/RestaurantSetup';
 import MenuManager from '../components/admin/MenuManager';
 import AccessibilityDashboard from '../components/admin/AccessibilityDashboard';
@@ -39,6 +40,7 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
   const [showQRModal, setShowQRModal] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState('');
   const [copied, setCopied] = useState(false);
+  const [exportingCSV, setExportingCSV] = useState(false);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const handleSignOut = async () => {
@@ -96,6 +98,18 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
     link.click();
   };
 
+  const handleExportCSV = async () => {
+    if (!restaurant) return;
+    setExportingCSV(true);
+    try {
+      await exportMenuToCSV(restaurant.id, restaurant.name);
+    } catch (err: any) {
+      alert(err.message || 'Failed to export menu');
+    } finally {
+      setExportingCSV(false);
+    }
+  };
+
   const loadRestaurant = async () => {
     if (!user) return;
 
@@ -144,6 +158,14 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
               >
                 <QrCode className="w-4 h-4" />
                 Share Menu
+              </button>
+              <button
+                onClick={handleExportCSV}
+                disabled={exportingCSV}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-colors disabled:opacity-50"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                {exportingCSV ? 'Exporting...' : 'Export Sheet'}
               </button>
               <button
                 onClick={handleSignOut}
