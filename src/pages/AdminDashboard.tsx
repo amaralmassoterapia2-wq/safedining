@@ -2,10 +2,10 @@ import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { LogOut, QrCode, Plus, BarChart3, X, Download, Copy, Check, FileSpreadsheet } from 'lucide-react';
-import { exportMenuToCSV } from '../lib/exportMenu';
 import RestaurantSetup from '../components/admin/RestaurantSetup';
 import MenuManager from '../components/admin/MenuManager';
 import AccessibilityDashboard from '../components/admin/AccessibilityDashboard';
+import AllergenMatrixPreview from '../components/admin/AllergenMatrixPreview';
 import QRCodeLib from 'qrcode';
 
 // Get the base URL for QR codes - use environment variable if set, otherwise use current origin
@@ -40,7 +40,7 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
   const [showQRModal, setShowQRModal] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState('');
   const [copied, setCopied] = useState(false);
-  const [exportingCSV, setExportingCSV] = useState(false);
+  const [showAllergenMatrix, setShowAllergenMatrix] = useState(false);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const handleSignOut = async () => {
@@ -98,16 +98,8 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
     link.click();
   };
 
-  const handleExportCSV = async () => {
-    if (!restaurant) return;
-    setExportingCSV(true);
-    try {
-      await exportMenuToCSV(restaurant.id, restaurant.name);
-    } catch (err: any) {
-      alert(err.message || 'Failed to export menu');
-    } finally {
-      setExportingCSV(false);
-    }
+  const handleOpenAllergenMatrix = () => {
+    setShowAllergenMatrix(true);
   };
 
   const loadRestaurant = async () => {
@@ -160,12 +152,11 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
                 Share Menu
               </button>
               <button
-                onClick={handleExportCSV}
-                disabled={exportingCSV}
-                className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-colors disabled:opacity-50"
+                onClick={handleOpenAllergenMatrix}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-colors"
               >
                 <FileSpreadsheet className="w-4 h-4" />
-                {exportingCSV ? 'Exporting...' : 'Export Sheet'}
+                Allergen Matrix
               </button>
               <button
                 onClick={handleSignOut}
@@ -305,6 +296,14 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
           </div>
         </div>
       )}
+
+      {/* Allergen Matrix Preview */}
+      <AllergenMatrixPreview
+        isOpen={showAllergenMatrix}
+        onClose={() => setShowAllergenMatrix(false)}
+        restaurantId={restaurant.id}
+        restaurantName={restaurant.name}
+      />
     </div>
   );
 }

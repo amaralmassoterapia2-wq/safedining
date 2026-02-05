@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase, Database } from '../lib/supabase';
 import { getOrCreateSessionId } from '../lib/customerSession';
-import { Settings, Shield, ChevronRight, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
+import { Settings, Shield, ChevronRight, AlertCircle, CheckCircle, XCircle, LogOut } from 'lucide-react';
 import BottomSheet from '../components/common/BottomSheet';
 import DishDetail from '../components/customer/DishDetail';
 import { analyzeDishSafety } from '../lib/safetyAnalysis';
@@ -31,9 +31,10 @@ interface MenuItemWithData extends MenuItem {
 interface CustomerMenuProps {
   qrCode: string;
   onEditProfile: () => void;
+  onExit?: () => void;
 }
 
-export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProps) {
+export default function CustomerMenu({ qrCode, onEditProfile, onExit }: CustomerMenuProps) {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItemWithData[]>([]);
   const [customerAllergens, setCustomerAllergens] = useState<string[]>([]);
@@ -218,14 +219,26 @@ export default function CustomerMenu({ qrCode, onEditProfile }: CustomerMenuProp
                 )}
               </div>
             </div>
-            <button
-              onClick={onEditProfile}
-              className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-colors"
-              title="Dietary Settings"
-            >
-              <Settings className="w-4 h-4" />
-              <span className="hidden sm:inline">Settings</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onEditProfile}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-colors"
+                title="Dietary Settings"
+              >
+                <Settings className="w-4 h-4" />
+                <span className="hidden sm:inline">Settings</span>
+              </button>
+              {onExit && (
+                <button
+                  onClick={onExit}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600/80 text-white rounded-lg hover:bg-red-600 transition-colors"
+                  title="Exit Menu"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span className="hidden sm:inline">Exit</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </header>

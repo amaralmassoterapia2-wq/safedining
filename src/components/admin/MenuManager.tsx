@@ -3,19 +3,23 @@ import { supabase, Database } from '../../lib/supabase';
 import MenuItemForm from './MenuItemForm';
 import MenuDigitization from '../onboarding/MenuDigitization';
 import DishDetailsInput from '../onboarding/DishDetailsInput';
-import { Plus, Edit2, Trash2, Eye, EyeOff, Camera, ArrowLeft } from 'lucide-react';
+import { Plus, Edit2, Trash2, Eye, EyeOff, Camera, ArrowLeft, AlertTriangle } from 'lucide-react';
 import { ScannedDish } from '../../pages/RestaurantOnboarding';
 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
 
 type ViewMode = 'list' | 'form' | 'scan' | 'details';
 
+interface MenuItemWithAllergens extends MenuItem {
+  allAllergens: string[];
+}
+
 interface MenuManagerProps {
   restaurantId: string;
 }
 
 export default function MenuManager({ restaurantId }: MenuManagerProps) {
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItemWithAllergens[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
@@ -35,7 +39,51 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
       .order('name', { ascending: true });
 
     if (!error && data) {
-      setMenuItems(data);
+      // Load allergens for each item from all sources
+      const itemsWithAllergens = await Promise.all(
+        data.map(async (item) => {
+          const allergenSet = new Set<string>();
+
+          // 1. Description allergens
+          for (const allergen of item.description_allergens || []) {
+            allergenSet.add(allergen.toLowerCase());
+          }
+
+          // 2. Ingredient allergens
+          const { data: menuItemIngredients } = await supabase
+            .from('menu_item_ingredients')
+            .select('*, ingredient:ingredients(*)')
+            .eq('menu_item_id', item.id);
+
+          for (const mii of menuItemIngredients || []) {
+            const ing = (mii as any).ingredient;
+            if (ing?.contains_allergens) {
+              for (const allergen of ing.contains_allergens) {
+                allergenSet.add(allergen.toLowerCase());
+              }
+            }
+          }
+
+          // 3. Cooking steps cross-contact risks
+          const { data: cookingSteps } = await supabase
+            .from('cooking_steps')
+            .select('cross_contact_risk')
+            .eq('menu_item_id', item.id);
+
+          for (const step of cookingSteps || []) {
+            for (const risk of step.cross_contact_risk || []) {
+              allergenSet.add(risk.toLowerCase());
+            }
+          }
+
+          return {
+            ...item,
+            allAllergens: Array.from(allergenSet).sort(),
+          };
+        })
+      );
+
+      setMenuItems(itemsWithAllergens);
     }
     setLoading(false);
   };
@@ -112,7 +160,7 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
     }
     acc[category].push(item);
     return acc;
-  }, {} as Record<string, MenuItem[]>);
+  }, {} as Record<string, MenuItemWithAllergens[]>);
 
   // Scan menu view
   if (viewMode === 'scan') {
@@ -269,6 +317,21 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
                       </div>
                       {item.description && (
                         <p className="text-sm text-slate-600 mt-1">{item.description}</p>
+                      )}
+                      {item.allAllergens && item.allAllergens.length > 0 && (
+                        <div className="flex items-center gap-2 mt-2 flex-wrap">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                          <div className="flex flex-wrap gap-1">
+                            {item.allAllergens.map((allergen) => (
+                              <span
+                                key={allergen}
+                                className="px-2 py-0.5 bg-amber-100 text-amber-800 text-xs rounded-full capitalize"
+                              >
+                                {allergen}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
                       )}
                       {item.price && (
                         <p className="text-sm font-medium text-emerald-600 mt-2">

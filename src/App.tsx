@@ -126,6 +126,12 @@ function AppContent() {
     setGuestView('dietary-setup');
   };
 
+  const handleExitMenu = () => {
+    setQrCode('');
+    setGuestView('landing');
+    window.history.pushState({}, '', '/');
+  };
+
   const handleRestaurantLoginSuccess = (id: string, isNewSignup: boolean = false) => {
     setRestaurantId(id);
     if (isNewSignup) {
@@ -174,7 +180,7 @@ function AppContent() {
   }
 
   if (guestView === 'menu' && qrCode) {
-    return <CustomerMenu qrCode={qrCode} onEditProfile={handleEditProfile} />;
+    return <CustomerMenu qrCode={qrCode} onEditProfile={handleEditProfile} onExit={handleExitMenu} />;
   }
 
   return (
