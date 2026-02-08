@@ -32,6 +32,7 @@ export default function AuthGate({ onComplete }: AuthGateProps) {
 
       if (authData.user) {
         const qrCode = `REST-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        const restaurantCode = String(Math.floor(1000 + Math.random() * 9000));
 
         // Use RPC function to bypass RLS (works before email confirmation)
         const { data: restaurantId, error: restaurantError } = await supabase
@@ -39,6 +40,7 @@ export default function AuthGate({ onComplete }: AuthGateProps) {
             p_name: restaurantName,
             p_owner_id: authData.user.id,
             p_qr_code: qrCode,
+            p_restaurant_code: restaurantCode,
           });
 
         if (restaurantError) throw restaurantError;

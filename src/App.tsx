@@ -65,12 +65,6 @@ function AppContent() {
     }
   }, []);
 
-  useEffect(() => {
-    if (userMode === 'restaurant' && user) {
-      loadRestaurantData();
-    }
-  }, [user, userMode]);
-
   const loadRestaurantData = async () => {
     if (!user) return;
 
