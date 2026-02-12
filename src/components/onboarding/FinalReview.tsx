@@ -1,7 +1,6 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase, Database, WeightUnit, formatAmount } from '../../lib/supabase';
-import { CheckCircle2, Download, QrCode as QrCodeIcon, ExternalLink, ArrowLeft, AlertTriangle, Loader2, Plus, X, ChevronDown, ChevronUp, Repeat, Trash2 } from 'lucide-react';
-import QRCode from 'qrcode';
+import { CheckCircle2, Copy, Check, ArrowLeft, AlertTriangle, Loader2, Plus, X, ChevronDown, ChevronUp, Repeat, Trash2 } from 'lucide-react';
 import { analyzeMenuItemAllergens, MenuItemAllergenAnalysis, COMMON_ALLERGENS } from '../../lib/openai';
 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
@@ -46,9 +45,8 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
   const [menuItems, setMenuItems] = useState<MenuItemWithIngredients[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzingAllergens, setAnalyzingAllergens] = useState(false);
-  const [qrGenerated, setQrGenerated] = useState(false);
-  const [qrCodeUrl, setQrCodeUrl] = useState('');
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [published, setPublished] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Allergen editing state
   const [editingAllergen, setEditingAllergen] = useState<EditingAllergen | null>(null);
@@ -156,7 +154,7 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
     }
   };
 
-  const handleGenerateQR = async () => {
+  const handlePublish = async () => {
     if (!restaurant) return;
 
     try {
@@ -168,47 +166,18 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
         })
         .eq('id', restaurantId);
 
-      setQrGenerated(true);
+      setPublished(true);
     } catch (err) {
-      console.error('Error generating QR code:', err);
-      alert('Failed to generate QR code. Please try again.');
+      console.error('Error publishing menu:', err);
+      alert('Failed to publish menu. Please try again.');
     }
   };
 
-  // Generate QR code after the canvas is rendered
-  useEffect(() => {
-    const generateQRToCanvas = async () => {
-      if (!qrGenerated || !restaurant || !canvasRef.current) return;
-
-      try {
-        const menuUrl = `${window.location.origin}/?qr=${restaurant.qr_code}`;
-
-        await QRCode.toCanvas(canvasRef.current, menuUrl, {
-          width: 300,
-          margin: 2,
-          color: {
-            dark: '#0F172A',
-            light: '#FFFFFF',
-          },
-        });
-
-        const dataUrl = canvasRef.current.toDataURL('image/png');
-        setQrCodeUrl(dataUrl);
-      } catch (err) {
-        console.error('Error generating QR to canvas:', err);
-      }
-    };
-
-    generateQRToCanvas();
-  }, [qrGenerated, restaurant]);
-
-  const handleDownloadQR = () => {
-    if (!qrCodeUrl || !restaurant) return;
-
-    const link = document.createElement('a');
-    link.download = `${restaurant.name.replace(/\s+/g, '-')}-menu-qr.png`;
-    link.href = qrCodeUrl;
-    link.click();
+  const handleCopyCode = () => {
+    if (!restaurant) return;
+    navigator.clipboard.writeText(restaurant.restaurant_code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const toggleItemExpanded = (itemId: string) => {
@@ -335,13 +304,13 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
     );
   }
 
-  const menuUrl = restaurant ? `${window.location.origin}/?qr=${restaurant.qr_code}` : '';
+  const restaurantCode = restaurant?.restaurant_code || '';
 
   return (
     <div className="min-h-screen p-4 py-8">
       <div className="max-w-5xl mx-auto">
         <div className="bg-white rounded-2xl shadow-2xl p-8">
-          {onBack && !qrGenerated && (
+          {onBack && !published && (
             <button
               onClick={onBack}
               className="text-slate-600 hover:text-slate-900 mb-6 flex items-center gap-2 text-sm font-medium transition-colors"
@@ -595,21 +564,21 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
             })}
           </div>
 
-          {!qrGenerated ? (
+          {!published ? (
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 mb-6">
               <h3 className="font-semibold text-slate-900 mb-3">Ready to publish?</h3>
               <p className="text-sm text-slate-700 mb-4">
-                Once you generate your QR code, customers will be able to scan it and access your
+                Once you publish, customers will be able to enter your restaurant code and access your
                 menu with allergen information. You can always edit menu items later from your
                 dashboard.
               </p>
               <button
-                onClick={handleGenerateQR}
+                onClick={handlePublish}
                 disabled={analyzingAllergens}
                 className="w-full bg-slate-900 text-white py-4 rounded-xl font-semibold hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3 disabled:opacity-50"
               >
-                <QrCodeIcon className="w-6 h-6" />
-                Generate My QR Code & Publish Menu
+                <CheckCircle2 className="w-6 h-6" />
+                Publish Menu
               </button>
             </div>
           ) : (
@@ -621,20 +590,42 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
                     Your Menu is Live!
                   </h3>
                   <p className="text-green-800">
-                    Customers can now scan this QR code to view your menu with allergen information.
+                    Customers can now enter your restaurant code to view your menu with allergen information.
                   </p>
                 </div>
               </div>
 
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="bg-white rounded-xl p-6 text-center">
-                  <canvas ref={canvasRef} className="mx-auto mb-4" />
+                  <p className="text-sm font-medium text-slate-600 mb-4">Your Restaurant Code</p>
+                  <div className="flex justify-center gap-3 mb-6">
+                    {restaurantCode.split('').map((digit, i) => (
+                      <span
+                        key={i}
+                        className="w-16 h-20 flex items-center justify-center bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-300 rounded-xl text-4xl font-bold text-slate-900 shadow-sm"
+                      >
+                        {digit}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="text-sm text-slate-500 mb-4">
+                    Customers enter this code in the app to view your menu
+                  </p>
                   <button
-                    onClick={handleDownloadQR}
+                    onClick={handleCopyCode}
                     className="w-full bg-slate-900 text-white py-3 rounded-lg font-semibold hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
                   >
-                    <Download className="w-5 h-5" />
-                    Download QR Code
+                    {copied ? (
+                      <>
+                        <Check className="w-5 h-5" />
+                        Code Copied!
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-5 h-5" />
+                        Copy Code
+                      </>
+                    )}
                   </button>
                 </div>
 
@@ -644,11 +635,11 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
                     <ul className="space-y-2 text-sm text-slate-700">
                       <li className="flex items-start gap-2">
                         <span className="text-green-600 mt-0.5">1.</span>
-                        <span>Print the QR code and place it on tables</span>
+                        <span>Share your restaurant code with customers</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <span className="text-green-600 mt-0.5">2.</span>
-                        <span>Add it to your physical menus</span>
+                        <span>Display the code on tables or menus</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <span className="text-green-600 mt-0.5">3.</span>
@@ -659,25 +650,6 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
                         <span>Keep menu information up-to-date</span>
                       </li>
                     </ul>
-                  </div>
-
-                  <div className="bg-white rounded-xl p-6">
-                    <h4 className="font-semibold text-slate-900 mb-2">Menu URL:</h4>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={menuUrl}
-                        readOnly
-                        className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                      />
-                      <button
-                        onClick={() => window.open(menuUrl, '_blank')}
-                        className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                        title="Open menu"
-                      >
-                        <ExternalLink className="w-5 h-5 text-slate-600" />
-                      </button>
-                    </div>
                   </div>
 
                   <button

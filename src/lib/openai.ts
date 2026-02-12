@@ -32,8 +32,9 @@ MILK/DAIRY:
 - Hidden: many breads, baked goods, chocolate, caramel, nougat, ranch dressing, cream sauces
 
 EGGS:
-- Direct: eggs, egg whites, egg yolks, mayonnaise, meringue, custard
+- Direct: eggs, egg whites, egg yolks, mayonnaise (mayo = eggs + oil + salt, NOT milk), meringue, custard, aioli
 - Hidden: pasta (some), baked goods, marshmallows, some sauces, tempura batter
+- IMPORTANT: Mayonnaise/mayo does NOT contain milk/dairy - it is made from eggs, oil, and acid (lemon/vinegar). Only tag as "Eggs", never "Milk"
 
 FISH:
 - Direct: salmon, tuna, cod, halibut, bass, trout, tilapia, anchovy, sardine, mackerel
@@ -340,6 +341,9 @@ EXAMPLES:
 - "peanut butter" -> ["Peanuts"]
 - "Worcestershire sauce" -> ["Fish"]
 - "fish sauce" -> ["Fish"]
+- "mayonnaise" -> ["Eggs"] (NOT Milk - mayo is eggs + oil + salt)
+- "mayo" -> ["Eggs"] (NOT Milk)
+- "aioli" -> ["Eggs"] (garlic mayo, NOT Milk)
 - "olive oil" -> []
 - "garlic" -> []
 - "onion" -> []
@@ -505,10 +509,11 @@ export async function suggestIngredientsForDish(
         messages: [
           {
             role: 'system',
-            content: `You are a culinary and allergen expert. Given a dish name and description, suggest likely ingredients WITH their correct allergen categories.
+            content: `You are a culinary and allergen expert. Given a dish name and description, suggest the ACTUAL ingredients that would be used in THIS specific dish.
 
-IMPORTANT: Prefer suggesting ingredients from the existing database when they match.
-Existing ingredients in database: ${existingNames.length > 0 ? existingNames.join(', ') : 'None yet'}
+IMPORTANT: Suggest ingredients based ONLY on what this specific dish would contain. Do NOT blindly suggest ingredients just because they exist in the database. Only mark "isExisting" as true if an ingredient you would genuinely suggest for this dish happens to match one already in the database.
+
+Existing ingredients in database (for matching only, NOT for suggestion): ${existingNames.length > 0 ? existingNames.join(', ') : 'None yet'}
 
 VALID ALLERGEN CATEGORIES (only use these exact names for allergens):
 ${ALLERGEN_CATEGORIES}
@@ -519,10 +524,11 @@ Return ONLY a JSON array with this structure:
 [{"name": "Ingredient Name", "allergens": ["AllergenCategory1"], "confidence": 90, "isExisting": true}]
 
 CRITICAL RULES:
+- Suggest ingredients that are ACTUALLY used in this dish, not random ingredients from the database
 - "allergens" must contain CATEGORY names, not ingredient names (e.g., "Shellfish" not "shrimp")
-- "confidence" is 0-100, how likely this ingredient is in the dish
-- "isExisting" is true if the ingredient matches one from the existing database (case-insensitive)
-- Include 5-15 most likely ingredients
+- "confidence" is 0-100, how likely this ingredient is in THIS specific dish
+- "isExisting" is true ONLY if an ingredient you'd genuinely suggest matches one from the existing database (case-insensitive)
+- Include 5-15 most likely ingredients for THIS dish
 - Sort by confidence (highest first)
 - Be specific (e.g., "Olive Oil" not just "Oil")
 - For each ingredient, correctly identify all applicable allergen categories`,

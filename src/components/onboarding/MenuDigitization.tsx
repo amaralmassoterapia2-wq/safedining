@@ -244,8 +244,15 @@ export default function MenuDigitization({ restaurantId, onComplete }: MenuDigit
             ? conflict.existingItem.id
             : conflict.scannedDish.id,
         });
+      } else if (conflict.action === 'keep' && conflict.existingItem) {
+        // Keep the existing item - include it with completed flag so DishDetailsInput
+        // shows it as already done (won't disappear from the list)
+        finalDishes.push({
+          ...conflict.scannedDish,
+          id: conflict.existingItem.id,
+          completed: true,
+        });
       }
-      // If 'keep', we don't add the scanned dish - existing item stays as is
     }
 
     // Also add any new dishes that don't have conflicts

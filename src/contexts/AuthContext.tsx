@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
@@ -17,6 +17,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const isSigningOut = useRef(false);
 
   useEffect(() => {
     // Handle email confirmation and other auth callbacks from URL
@@ -63,9 +64,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     handleAuthCallback();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      if (event === 'SIGNED_OUT') {
+        // Only clear user state if this was an explicit sign-out
+        if (isSigningOut.current) {
+          setSession(null);
+          setUser(null);
+          isSigningOut.current = false;
+        } else {
+          // Unexpected sign-out (e.g., token refresh failure during heavy API usage)
+          // Try to recover the session before giving up
+          console.warn('Unexpected SIGNED_OUT event, attempting session recovery...');
+          try {
+            const { data: { session: recoveredSession } } = await supabase.auth.getSession();
+            if (recoveredSession) {
+              setSession(recoveredSession);
+              setUser(recoveredSession.user);
+              console.log('Session recovered successfully');
+            } else {
+              // Session truly expired, clear state
+              setSession(null);
+              setUser(null);
+            }
+          } catch {
+            // Recovery failed, clear state
+            setSession(null);
+            setUser(null);
+          }
+        }
+      } else if (newSession) {
+        setSession(newSession);
+        setUser(newSession.user);
+      }
       setLoading(false);
     });
 
@@ -92,6 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    isSigningOut.current = true;
     await supabase.auth.signOut();
   };
 

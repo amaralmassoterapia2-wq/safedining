@@ -137,8 +137,9 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
   const calorieDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const currentDish = currentDishIndex !== null ? dishes[currentDishIndex] : null;
+  const DEFAULT_DISH_FORM: DishForm = { ingredients: [], preparation: '', photoFile: null, photoUrl: '', cookingSteps: [], nutrition: DEFAULT_NUTRITION_FIELDS };
   const currentForm = currentDish
-    ? dishForms[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '', cookingSteps: [], nutrition: DEFAULT_NUTRITION_FIELDS }
+    ? { ...DEFAULT_DISH_FORM, ...dishForms[currentDish.id] }
     : null;
 
   // Load existing ingredients and recently completed dishes on mount
@@ -146,6 +147,18 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     loadExistingIngredients();
     loadRecentlyCompletedDishes();
   }, [restaurantId]);
+
+  // Mark dishes that were flagged as completed (e.g., "keep existing" from conflict resolution)
+  useEffect(() => {
+    const preCompleted = dishes.filter(d => d.completed);
+    if (preCompleted.length > 0) {
+      setCompletedDishes(prev => {
+        const next = new Set(prev);
+        preCompleted.forEach(d => next.add(d.id));
+        return next;
+      });
+    }
+  }, [dishes]);
 
   // Load AI suggestions when selecting a dish
   useEffect(() => {
@@ -341,6 +354,8 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             setDishForms(prev => ({
               ...prev,
               [matchingDish.id]: {
+                ...DEFAULT_DISH_FORM,
+                ...prev[matchingDish.id],
                 ingredients,
                 preparation: item.preparation || '',
                 photoFile: null,
@@ -389,7 +404,8 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       setDishForms((prev) => ({
         ...prev,
         [dishId]: {
-          ...prev[dishId] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '' },
+          ...DEFAULT_DISH_FORM,
+          ...prev[dishId],
           photoFile: file,
           photoUrl: url
         },
@@ -409,7 +425,8 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     setDishForms((prev) => ({
       ...prev,
       [currentDish.id]: {
-        ...prev[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '' },
+        ...DEFAULT_DISH_FORM,
+        ...prev[currentDish.id],
         ingredients: [...(prev[currentDish.id]?.ingredients || []), ingredient],
       },
     }));
@@ -740,7 +757,8 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     setDishForms((prev) => ({
       ...prev,
       [currentDish.id]: {
-        ...prev[currentDish.id] || { ingredients: [], preparation: '', photoFile: null, photoUrl: '', cookingSteps: [], nutrition: DEFAULT_NUTRITION_FIELDS },
+        ...DEFAULT_DISH_FORM,
+        ...prev[currentDish.id],
         cookingSteps: [
           ...currentSteps,
           {
@@ -779,15 +797,15 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     }));
 
     // Auto-detect cross-contact risks when description changes
-    if (field === 'description' && typeof value === 'string' && value.trim()) {
+    if (field === 'description' && typeof value === 'string' && value.trim().length >= 10) {
       // Clear existing debounce
       if (crossContactDebounceRef.current[index]) {
         clearTimeout(crossContactDebounceRef.current[index]);
       }
-      // Set new debounce
+      // Set new debounce - 3 seconds to avoid interrupting typing
       crossContactDebounceRef.current[index] = setTimeout(() => {
         analyzeCrossContactRisksForStep(index, value);
-      }, 1000);
+      }, 3000);
     }
   };
 
@@ -2064,10 +2082,10 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
               </div>
             </div>
 
-            {/* Preparation Section */}
+            {/* Cooking Steps Section */}
             <div>
               <label className="block text-sm font-semibold text-slate-900 mb-2">
-                Preparation Process
+                Cooking Steps
               </label>
               <p className="text-xs text-slate-600 mb-2">
                 Describe the cooking process. Note any shared surfaces, fryers, or equipment used for allergens.
@@ -2086,12 +2104,12 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
               />
             </div>
 
-            {/* Cooking Steps Section (Optional) */}
+            {/* Cross-Contact Risk Steps Section (Optional) */}
             <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="font-semibold text-slate-900">Cooking Steps (Optional)</h3>
-                  <p className="text-xs text-slate-500 mt-1">Add step-by-step cooking instructions with cross-contact risk tracking</p>
+                  <h3 className="font-semibold text-slate-900">Cross-Contact Risk Steps (Optional)</h3>
+                  <p className="text-xs text-slate-500 mt-1">Add step-by-step details for cross-contact risk tracking</p>
                 </div>
                 <button
                   type="button"
@@ -2110,25 +2128,18 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                       <div className="flex-shrink-0 w-8 h-8 bg-slate-900 text-white rounded-full flex items-center justify-center font-semibold text-sm">
                         {step.step_number}
                       </div>
-                      <div className="flex-1 relative">
+                      <div className="flex-1">
                         <textarea
                           value={step.description}
                           onChange={(e) => updateCookingStep(index, 'description', e.target.value)}
                           placeholder="Describe this cooking step (e.g., 'Fried in shared oil with shrimp')"
                           rows={2}
-                          disabled={detectingCrossContact === index}
-                          className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent resize-none transition-colors ${
-                            detectingCrossContact === index
-                              ? 'bg-amber-50 border-amber-300 text-slate-500'
-                              : 'border-slate-300'
-                          }`}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent resize-none"
                         />
                         {detectingCrossContact === index && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-amber-50/80 rounded-lg">
-                            <div className="flex items-center gap-2 text-amber-700">
-                              <Loader2 className="w-5 h-5 animate-spin" />
-                              <span className="text-sm font-medium">Analyzing cross-contact risks...</span>
-                            </div>
+                          <div className="flex items-center gap-2 text-amber-700 mt-1">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            <span className="text-xs">Analyzing cross-contact risks...</span>
                           </div>
                         )}
                       </div>

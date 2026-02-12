@@ -521,17 +521,17 @@ export default function MenuItemForm({
       prev.map((step, i) => (i === index ? { ...step, [field]: value } : step))
     );
 
-    // Auto-detect cross-contact risks when description changes (debounced 2 seconds)
-    if (field === 'description' && typeof value === 'string' && value.trim()) {
+    // Auto-detect cross-contact risks when description changes (debounced 3 seconds, min 10 chars)
+    if (field === 'description' && typeof value === 'string' && value.trim().length >= 10) {
       // Clear existing timeout for this step
       if (crossContactDebounceRef.current[index]) {
         clearTimeout(crossContactDebounceRef.current[index]);
       }
 
-      // Set new timeout
+      // Set new timeout - 3 seconds to avoid interrupting typing
       crossContactDebounceRef.current[index] = setTimeout(() => {
         analyzeCrossContactRisksForStep(index, value);
-      }, 2000);
+      }, 3000);
     }
   };
 
@@ -578,11 +578,11 @@ export default function MenuItemForm({
       clearTimeout(descriptionDebounceRef.current);
     }
 
-    // Auto-detect allergens after 2 seconds of inactivity
-    if (value.trim()) {
+    // Auto-detect allergens after 3 seconds of inactivity (min 10 chars)
+    if (value.trim().length >= 10) {
       descriptionDebounceRef.current = setTimeout(() => {
         analyzeDescriptionAllergens(value);
-      }, 2000);
+      }, 3000);
     } else {
       setDescriptionAllergens([]);
     }
@@ -1017,25 +1017,18 @@ export default function MenuItemForm({
               <label className="block text-sm font-medium text-slate-700 mb-2">
                 Description
               </label>
-              <div className="relative">
+              <div>
                 <textarea
                   value={description}
                   onChange={(e) => handleDescriptionChange(e.target.value)}
                   placeholder="Brief description of the dish (e.g., 'Grilled salmon with creamy dill sauce')"
                   rows={3}
-                  disabled={detectingDescriptionAllergens}
-                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none transition-colors ${
-                    detectingDescriptionAllergens
-                      ? 'bg-amber-50 border-amber-300 text-slate-500'
-                      : 'border-slate-300'
-                  }`}
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none"
                 />
                 {detectingDescriptionAllergens && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-amber-50/80 rounded-lg">
-                    <div className="flex items-center gap-2 text-amber-700">
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span className="text-sm font-medium">Detecting allergens...</span>
-                    </div>
+                  <div className="flex items-center gap-2 text-amber-700 mt-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span className="text-xs">Detecting allergens...</span>
                   </div>
                 )}
               </div>
@@ -1497,25 +1490,18 @@ export default function MenuItemForm({
                   <div className="flex-shrink-0 w-8 h-8 bg-slate-900 text-white rounded-full flex items-center justify-center font-semibold text-sm">
                     {step.step_number}
                   </div>
-                  <div className="flex-1 relative">
+                  <div className="flex-1">
                     <textarea
                       value={step.description}
                       onChange={(e) => updateCookingStep(index, 'description', e.target.value)}
                       placeholder="Describe this cooking step (e.g., 'Fried in shared oil with shrimp')"
                       rows={2}
-                      disabled={detectingCrossContact === index}
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none transition-colors ${
-                        detectingCrossContact === index
-                          ? 'bg-amber-50 border-amber-300 text-slate-500'
-                          : 'border-slate-300'
-                      }`}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none"
                     />
                     {detectingCrossContact === index && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-amber-50/80 rounded-lg">
-                        <div className="flex items-center gap-2 text-amber-700">
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          <span className="text-sm font-medium">Analyzing cross-contact risks...</span>
-                        </div>
+                      <div className="flex items-center gap-2 text-amber-700 mt-1">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span className="text-xs">Analyzing cross-contact risks...</span>
                       </div>
                     )}
                   </div>

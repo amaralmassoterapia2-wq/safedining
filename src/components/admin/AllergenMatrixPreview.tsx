@@ -373,6 +373,8 @@ export default function AllergenMatrixPreview({
           }
 
           // 3. Ingredient allergens (may be modifiable)
+          // If any ingredient with this allergen is removable/substitutable,
+          // the allergen can be modified — chef explicitly marked it as such
           for (const mii of menuItemIngredients || []) {
             const ing = (mii as any).ingredient;
             if (!ing) continue;
@@ -382,16 +384,13 @@ export default function AllergenMatrixPreview({
               for (const allergen of ALLERGENS) {
                 if (allergen.aliases.some((alias) => lowerAllergen.includes(alias))) {
                   const canModify = mii.is_removable || mii.is_substitutable;
-                  // If already marked as present and cannot modify, keep it that way
-                  if (allergenInfo[allergen.key].present && !allergenInfo[allergen.key].canModify) {
-                    continue;
+                  if (canModify) {
+                    // Chef explicitly marked this ingredient as modifiable — upgrade to can_modify
+                    allergenInfo[allergen.key] = { present: true, canModify: true };
+                  } else if (!allergenInfo[allergen.key].present) {
+                    // First time seeing this allergen from a non-modifiable ingredient
+                    allergenInfo[allergen.key] = { present: true, canModify: false };
                   }
-                  allergenInfo[allergen.key] = {
-                    present: true,
-                    canModify: allergenInfo[allergen.key].present
-                      ? allergenInfo[allergen.key].canModify && canModify
-                      : canModify,
-                  };
                 }
               }
             }
