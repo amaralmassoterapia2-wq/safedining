@@ -1135,6 +1135,9 @@ export const DIETARY_MENU_CATEGORIES: DietaryMenuCategory[] = [
   { id: 'sesame-free', name: 'Sesame-Free', description: 'No sesame seeds, tahini, or sesame oil', type: 'allergen-free' },
   { id: 'vegetarian', name: 'Vegetarian', description: 'No meat, poultry, or fish (dairy/eggs allowed)', type: 'dietary-style' },
   { id: 'vegan', name: 'Vegan', description: 'No animal products (meat, dairy, eggs, honey)', type: 'dietary-style' },
+  { id: 'pescatarian', name: 'Pescatarian', description: 'No meat or poultry (fish, seafood, dairy, eggs allowed)', type: 'dietary-style' },
+  { id: 'kosher', name: 'Kosher', description: 'No pork, shellfish, or mixing of meat and dairy', type: 'dietary-style' },
+  { id: 'halal', name: 'Halal', description: 'No pork, alcohol, or non-halal slaughtered meat', type: 'dietary-style' },
   { id: 'low-carb', name: 'Low-Carb', description: 'Less than 20g net carbs per serving', type: 'health-focused' },
   { id: 'low-sodium', name: 'Low-Sodium', description: 'Less than 600mg sodium per serving', type: 'health-focused' },
 ];
@@ -1290,6 +1293,15 @@ export async function analyzeDietaryMenuWithAI(
       break;
     case 'low-carb':
       categoryDescription = 'LOW-CARB: Less than 20g net carbs per serving. Focus on proteins, fats, and non-starchy vegetables. No bread, pasta, rice, potatoes, sugar.';
+      break;
+    case 'pescatarian':
+      categoryDescription = 'PESCATARIAN: No meat or poultry (beef, pork, lamb, chicken, turkey, game). Fish and seafood ARE allowed. Dairy and eggs ARE allowed. Gelatin from animals is NOT pescatarian.';
+      break;
+    case 'kosher':
+      categoryDescription = 'KOSHER: No pork or pork products (bacon, ham, lard). No shellfish (shrimp, crab, lobster, clams, mussels). No mixing of meat and dairy in the same dish. Gelatin from non-kosher animals is NOT kosher. Fish with fins and scales ARE allowed.';
+      break;
+    case 'halal':
+      categoryDescription = 'HALAL: No pork or pork products (bacon, ham, lard, gelatin from pork). No alcohol or alcohol-based ingredients (wine, beer, rum, vanilla extract with alcohol). All meat must be halal-slaughtered — if meat source is unknown, mark as not halal. Fish and seafood ARE generally allowed.';
       break;
     case 'low-sodium':
       categoryDescription = 'LOW-SODIUM: Less than 600mg sodium per serving. Avoid processed foods, soy sauce, pickled items, cured meats, high-sodium seasonings.';

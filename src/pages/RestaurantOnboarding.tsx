@@ -3,9 +3,10 @@ import { supabase } from '../lib/supabase';
 import LiabilityAgreement from '../components/onboarding/LiabilityAgreement';
 import MenuDigitization from '../components/onboarding/MenuDigitization';
 import DishDetailsInput from '../components/onboarding/DishDetailsInput';
+import ChefModifications from '../components/onboarding/ChefModifications';
 import FinalReview from '../components/onboarding/FinalReview';
 
-export type OnboardingStep = 'loading' | 'terms' | 'scan' | 'details' | 'review';
+export type OnboardingStep = 'loading' | 'terms' | 'scan' | 'details' | 'modifications' | 'review';
 
 export interface ScannedDish {
   id: string;
@@ -54,11 +55,19 @@ export default function RestaurantOnboarding({ restaurantId, onComplete }: Resta
   };
 
   const handleDetailsComplete = () => {
+    setCurrentStep('modifications');
+  };
+
+  const handleModificationsComplete = () => {
     setCurrentStep('review');
   };
 
   const handleBackToDetails = () => {
     setCurrentStep('details');
+  };
+
+  const handleBackToModifications = () => {
+    setCurrentStep('modifications');
   };
 
   if (currentStep === 'loading') {
@@ -90,8 +99,15 @@ export default function RestaurantOnboarding({ restaurantId, onComplete }: Resta
           onComplete={handleDetailsComplete}
         />
       )}
+      {currentStep === 'modifications' && restaurantId && (
+        <ChefModifications
+          restaurantId={restaurantId}
+          onBack={handleBackToDetails}
+          onComplete={handleModificationsComplete}
+        />
+      )}
       {currentStep === 'review' && restaurantId && (
-        <FinalReview restaurantId={restaurantId} onBack={handleBackToDetails} onComplete={onComplete} />
+        <FinalReview restaurantId={restaurantId} onBack={handleBackToModifications} onComplete={onComplete} />
       )}
     </div>
   );

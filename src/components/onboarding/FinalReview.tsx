@@ -6,6 +6,7 @@ import { analyzeMenuItemAllergens, MenuItemAllergenAnalysis, COMMON_ALLERGENS } 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
 type Ingredient = Database['public']['Tables']['ingredients']['Row'];
 type Restaurant = Database['public']['Tables']['restaurants']['Row'];
+type CookingStep = Database['public']['Tables']['cooking_steps']['Row'];
 
 interface SubstituteIngredient {
   id: string;
@@ -23,6 +24,7 @@ interface IngredientWithAmount extends Ingredient {
 
 interface MenuItemWithIngredients extends MenuItem {
   ingredients: IngredientWithAmount[];
+  cookingSteps: CookingStep[];
   allergenAnalysis?: MenuItemAllergenAnalysis;
   photo_url?: string | null;
 }
@@ -117,9 +119,17 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
               };
             });
 
+            // Load cooking steps
+            const { data: cookingStepsData } = await supabase
+              .from('cooking_steps')
+              .select('*')
+              .eq('menu_item_id', item.id)
+              .order('step_number');
+
             return {
               ...item,
               ingredients,
+              cookingSteps: cookingStepsData || [],
             };
           })
         );
@@ -470,7 +480,7 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
                         ) : (
                           <ChevronDown className="w-4 h-4" />
                         )}
-                        Preparation Instructions
+                        Cooking Steps
                       </button>
                       {isExpanded && (
                         <div className="mt-2 p-3 bg-slate-50 rounded-lg text-sm text-slate-700 whitespace-pre-wrap">
@@ -479,6 +489,32 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
                       )}
                     </div>
                   )}
+
+                  {/* Cooking Step Modifications */}
+                  {(() => {
+                    const modifiableSteps = (item.cookingSteps || []).filter((s: CookingStep) => s.is_modifiable);
+                    if (modifiableSteps.length === 0) return null;
+                    return (
+                      <div className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                        <span className="text-sm font-medium text-blue-700 block mb-2">Cooking Step Modifications Available:</span>
+                        {modifiableSteps.map((step: CookingStep) => (
+                          <div key={step.id} className="mb-2 last:mb-0">
+                            <span className="text-xs text-blue-800 font-medium">Step {step.step_number}: {step.description}</span>
+                            {step.modifiable_allergens.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {step.modifiable_allergens.map((a: string) => (
+                                  <span key={a} className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">Can avoid: {a}</span>
+                                ))}
+                              </div>
+                            )}
+                            {step.modification_notes && (
+                              <p className="text-xs text-blue-600 mt-1">{step.modification_notes}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
 
                   {/* Allergen Information with Edit Controls */}
                   <div className="mb-2">
@@ -518,7 +554,7 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
                         </span>
                       ))}
 
-                      {/* Cross-contamination risks from preparation - with delete button */}
+                      {/* Cross-contamination risks from cooking steps - with delete button */}
                       {hasCrossContamination && analysis.crossContaminationRisks.map((risk, idx) => (
                         <span
                           key={`cross-${idx}`}
@@ -710,7 +746,7 @@ export default function FinalReview({ restaurantId, onBack, onComplete }: FinalR
                 >
                   <div className="font-medium text-slate-900 text-sm">Cross-Contamination</div>
                   <div className="text-xs text-slate-500 mt-1">
-                    Risk from preparation/equipment
+                    Risk from cooking steps/equipment
                   </div>
                 </button>
               </div>

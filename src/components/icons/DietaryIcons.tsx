@@ -139,6 +139,65 @@ export const EggFreeIcon: React.FC<IconProps> = ({ className = '', size = 24 }) 
   </svg>
 );
 
+export const KosherIcon: React.FC<IconProps> = ({ className = '', size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+    <path
+      d="M12 2L14.5 8.5L21 9.5L16.5 14L17.5 21L12 17.5L6.5 21L7.5 14L3 9.5L9.5 8.5L12 2Z"
+      fill="currentColor"
+      opacity="0.2"
+    />
+    <path
+      d="M12 2L14.5 8.5L21 9.5L16.5 14L17.5 21L12 17.5L6.5 21L7.5 14L3 9.5L9.5 8.5L12 2Z"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+export const HalalIcon: React.FC<IconProps> = ({ className = '', size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+    <path
+      d="M18 12C18 8.68629 15.3137 6 12 6C8.68629 6 6 8.68629 6 12C6 15.3137 8.68629 18 12 18"
+      fill="currentColor"
+      opacity="0.2"
+    />
+    <path
+      d="M18 12C18 8.68629 15.3137 6 12 6C8.68629 6 6 8.68629 6 12C6 15.3137 8.68629 18 12 18"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+    />
+    <circle cx="15" cy="9" r="1.5" fill="currentColor" />
+  </svg>
+);
+
+export const PescatarianIcon: React.FC<IconProps> = ({ className = '', size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+    <path
+      d="M2 12C2 12 6 6 13 6C13 6 11 9 11 12C11 15 13 18 13 18C6 18 2 12 2 12Z"
+      fill="currentColor"
+      opacity="0.2"
+    />
+    <path
+      d="M2 12C2 12 6 6 13 6C13 6 11 9 11 12C11 15 13 18 13 18C6 18 2 12 2 12Z"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M18 7L22 12L18 17V13H15V11H18V7Z"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="7" cy="12" r="1" fill="currentColor" />
+  </svg>
+);
+
 export const getDietaryIcon = (restriction: string, size: number = 20): React.ReactElement => {
   const lowerRestriction = restriction.toLowerCase();
   const className = "inline-block";
@@ -151,6 +210,9 @@ export const getDietaryIcon = (restriction: string, size: number = 20): React.Re
   if (lowerRestriction.includes('shellfish') || lowerRestriction.includes('seafood')) return <ShellfishFreeIcon size={size} className={className} />;
   if (lowerRestriction.includes('soy')) return <SoyFreeIcon size={size} className={className} />;
   if (lowerRestriction.includes('egg')) return <EggFreeIcon size={size} className={className} />;
+  if (lowerRestriction.includes('kosher')) return <KosherIcon size={size} className={className} />;
+  if (lowerRestriction.includes('halal')) return <HalalIcon size={size} className={className} />;
+  if (lowerRestriction.includes('pescatarian')) return <PescatarianIcon size={size} className={className} />;
 
   return <span className="text-sm">🚫</span>;
 };

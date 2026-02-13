@@ -340,6 +340,41 @@ export default function DishDetail({ dish, customerAllergens }: DishDetailProps)
         </div>
       )}
 
+      {/* Cooking Step Modifications */}
+      {(() => {
+        const modifiableSteps = (dish.cookingSteps || []).filter(s => s.is_modifiable);
+        if (modifiableSteps.length === 0) return null;
+        return (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-5">
+            <h3 className="text-lg font-bold text-blue-900 mb-3">Cooking Modifications Available</h3>
+            <p className="text-sm text-blue-700 mb-3">These cooking steps can be adjusted to accommodate your dietary needs.</p>
+            <div className="space-y-3">
+              {modifiableSteps.map((step) => (
+                <div key={step.id} className="bg-white rounded-lg p-3 border border-blue-200">
+                  <p className="text-sm font-medium text-slate-900">Step {step.step_number}: {step.description}</p>
+                  {step.modifiable_allergens.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {step.modifiable_allergens.map(a => {
+                        const isRelevant = customerAllergens.some(ca => a.toLowerCase().includes(ca.toLowerCase()));
+                        return (
+                          <span key={a} className={`px-2 py-0.5 text-xs rounded-full ${isRelevant ? 'bg-green-100 text-green-800 font-medium' : 'bg-slate-100 text-slate-600'}`}>
+                            Can avoid: {a}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {step.modification_notes && (
+                    <p className="text-sm text-blue-700 mt-2 italic">{step.modification_notes}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-blue-600 mt-3">Ask your server about modifying these cooking steps.</p>
+          </div>
+        );
+      })()}
+
       {hasNutrition && (
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
           <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">

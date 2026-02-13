@@ -10,7 +10,14 @@ interface AppModeContextType {
 const AppModeContext = createContext<AppModeContextType | undefined>(undefined);
 
 export function AppModeProvider({ children }: { children: ReactNode }) {
-  const [userMode, setUserMode] = useState<UserMode>('guest');
+  const [userMode, setUserModeState] = useState<UserMode>(() => {
+    return (localStorage.getItem('safedining_user_mode') as UserMode) || 'guest';
+  });
+
+  const setUserMode = (mode: UserMode) => {
+    setUserModeState(mode);
+    localStorage.setItem('safedining_user_mode', mode);
+  };
 
   return (
     <AppModeContext.Provider value={{ userMode, setUserMode }}>

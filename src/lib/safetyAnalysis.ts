@@ -107,7 +107,17 @@ export function analyzeDishSafety(
       const riskLower = risk.toLowerCase();
       for (const allergen of allergenSet) {
         if (riskLower.includes(allergen)) {
-          crossContactRisks.push(`${step.description} (risk: ${risk})`);
+          // Check if this cooking step can be modified to avoid this allergen
+          if (step.is_modifiable && step.modifiable_allergens?.some(
+            (ma: string) => ma.toLowerCase().includes(allergen)
+          )) {
+            modificationSuggestions.push(
+              `Modify cooking step "${step.description}": ${step.modification_notes || 'Ask chef for details'}`
+            );
+            removableAllergens.add(risk);
+          } else {
+            crossContactRisks.push(`${step.description} (risk: ${risk})`);
+          }
           foundAllergens.add(risk);
         }
       }

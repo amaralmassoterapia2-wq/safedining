@@ -20,6 +20,7 @@ function AppContent() {
   const [restaurantView, setRestaurantView] = useState<RestaurantView>('login');
   const [qrCode, setQrCode] = useState<string>('');
   const [restaurantId, setRestaurantId] = useState<string | null>(null);
+  const [restoringSession, setRestoringSession] = useState(true);
 
   useEffect(() => {
     const path = window.location.pathname;
@@ -64,6 +65,22 @@ function AppContent() {
       }
     }
   }, []);
+
+  // Restore restaurant session on hard refresh
+  useEffect(() => {
+    if (loading) return;
+
+    if (user && userMode === 'restaurant' && !restaurantId) {
+      // Authenticated user in restaurant mode — restore their data
+      loadRestaurantData().finally(() => setRestoringSession(false));
+    } else {
+      if (!user && userMode === 'restaurant') {
+        // Session expired or user signed out — reset to guest
+        setUserMode('guest');
+      }
+      setRestoringSession(false);
+    }
+  }, [loading, user]);
 
   const loadRestaurantData = async () => {
     if (!user) return;
@@ -137,7 +154,7 @@ function AppContent() {
     }
   };
 
-  if (loading) {
+  if (loading || restoringSession) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-slate-600">Loading...</div>

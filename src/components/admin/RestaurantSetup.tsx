@@ -142,7 +142,7 @@ export default function RestaurantSetup({ onRestaurantCreated }: RestaurantSetup
             <ul className="text-sm text-slate-600 space-y-1">
               <li>• Add menu items with detailed ingredients</li>
               <li>• Specify allergen information and cooking steps</li>
-              <li>• Generate a QR code for customers to scan</li>
+              <li>• Share your 4-digit code for customers to access your menu</li>
               <li>• Track accessibility metrics and customer requests</li>
             </ul>
           </div>

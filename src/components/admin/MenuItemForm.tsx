@@ -37,6 +37,9 @@ interface CookingStepInput {
   step_number: number;
   description: string;
   cross_contact_risk: string[];
+  is_modifiable: boolean;
+  modifiable_allergens: string[];
+  modification_notes: string;
 }
 
 export default function MenuItemForm({
@@ -269,6 +272,9 @@ export default function MenuItemForm({
           step_number: step.step_number,
           description: step.description,
           cross_contact_risk: step.cross_contact_risk || [],
+          is_modifiable: step.is_modifiable || false,
+          modifiable_allergens: step.modifiable_allergens || [],
+          modification_notes: step.modification_notes || '',
         }))
       );
     }
@@ -504,6 +510,9 @@ export default function MenuItemForm({
         step_number: cookingSteps.length + 1,
         description: '',
         cross_contact_risk: [],
+        is_modifiable: false,
+        modifiable_allergens: [],
+        modification_notes: '',
       },
     ]);
   };
@@ -782,6 +791,9 @@ export default function MenuItemForm({
             step_number: step.step_number,
             description: step.description.trim(),
             cross_contact_risk: step.cross_contact_risk,
+            is_modifiable: step.is_modifiable,
+            modifiable_allergens: step.modifiable_allergens,
+            modification_notes: step.modification_notes || null,
           }));
 
         if (stepsToInsert.length > 0) {
@@ -1578,6 +1590,67 @@ export default function MenuItemForm({
                   <p className="text-xs text-slate-500 mt-2">
                     Click to add risks, or let AI detect them from the step description
                   </p>
+                </div>
+
+                {/* Modification Settings */}
+                <div className="border-t border-slate-200 pt-3 mt-3">
+                  <label className="flex items-center gap-2 cursor-pointer mb-2">
+                    <input
+                      type="checkbox"
+                      checked={step.is_modifiable}
+                      onChange={(e) => updateCookingStep(index, 'is_modifiable', e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-green-600 focus:ring-green-500"
+                    />
+                    <span className="text-sm text-slate-700">This step can be modified to avoid allergens</span>
+                  </label>
+
+                  {step.is_modifiable && (
+                    <div className="pl-6 space-y-2">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">
+                          Which allergens can be avoided by modifying this step?
+                        </label>
+                        {step.modifiable_allergens.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {step.modifiable_allergens.map((allergen) => (
+                              <span key={allergen} className="inline-flex items-center gap-1 px-2.5 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">
+                                {allergen}
+                                <button
+                                  type="button"
+                                  onClick={() => updateCookingStep(index, 'modifiable_allergens', step.modifiable_allergens.filter((a: string) => a !== allergen))}
+                                  className="p-0.5 hover:bg-green-200 rounded-full transition-colors"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap gap-2">
+                          {COMMON_ALLERGENS.filter(a => !step.modifiable_allergens.includes(a)).map((allergen) => (
+                            <button
+                              key={allergen}
+                              type="button"
+                              onClick={() => updateCookingStep(index, 'modifiable_allergens', [...step.modifiable_allergens, allergen])}
+                              className="px-2 py-1 text-xs bg-slate-100 text-slate-600 rounded-full hover:bg-green-100 hover:text-green-700 transition-colors"
+                            >
+                              + {allergen}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">How can this step be modified?</label>
+                        <textarea
+                          value={step.modification_notes}
+                          onChange={(e) => updateCookingStep(index, 'modification_notes', e.target.value)}
+                          placeholder="e.g., Can use separate fryer, can substitute oil..."
+                          rows={2}
+                          className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

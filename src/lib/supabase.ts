@@ -250,6 +250,9 @@ export type Database = {
           step_number: number;
           description: string;
           cross_contact_risk: string[];
+          is_modifiable: boolean;
+          modifiable_allergens: string[];
+          modification_notes: string | null;
           created_at: string;
         };
         Insert: {
@@ -258,6 +261,9 @@ export type Database = {
           step_number: number;
           description: string;
           cross_contact_risk?: string[];
+          is_modifiable?: boolean;
+          modifiable_allergens?: string[];
+          modification_notes?: string | null;
           created_at?: string;
         };
         Update: {
@@ -266,6 +272,9 @@ export type Database = {
           step_number?: number;
           description?: string;
           cross_contact_risk?: string[];
+          is_modifiable?: boolean;
+          modifiable_allergens?: string[];
+          modification_notes?: string | null;
           created_at?: string;
         };
       };
