@@ -119,7 +119,6 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
   const [newIngredientAmountValue, setNewIngredientAmountValue] = useState<string>('');
   const [newIngredientAmountUnit, setNewIngredientAmountUnit] = useState<WeightUnit>('g');
   const [detectingAllergens, setDetectingAllergens] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [editingAllergenIndex, setEditingAllergenIndex] = useState<number | null>(null);
   const allergenEditorRef = useRef<HTMLDivElement>(null);
   const [existingDishData, setExistingDishData] = useState<Record<string, ExistingDishData>>({});
@@ -508,21 +507,6 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     }
   };
 
-  const handleAddExistingIngredient = (ingredient: Ingredient) => {
-    addIngredient({
-      ingredientId: ingredient.id,
-      name: ingredient.name,
-      amountValue: null,
-      amountUnit: 'g',
-      allergens: ingredient.contains_allergens,
-      isNew: false,
-      isRemovable: false,
-      isSubstitutable: false,
-      substitutes: [],
-    });
-    setSearchQuery('');
-  };
-
   const handleAddSuggestedIngredient = (suggestion: SuggestedIngredient) => {
     // If suggestion has an existing ID, use the allergens from our local state
     // (which may have been updated with custom allergens)
@@ -790,7 +774,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     }));
   };
 
-  const updateCookingStep = (index: number, field: keyof CookingStepInput, value: string | string[] | number) => {
+  const updateCookingStep = (index: number, field: keyof CookingStepInput, value: string | string[] | number | boolean) => {
     if (!currentDish) return;
     setDishForms((prev) => ({
       ...prev,
@@ -1197,12 +1181,6 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
 
   const completedCount = completedDishes.size;
   const progress = (completedCount / dishes.length) * 100;
-
-  // Filter existing ingredients based on search
-  const filteredIngredients = existingIngredients.filter(ing =>
-    ing.name.toLowerCase().includes(searchQuery.toLowerCase()) &&
-    !currentForm?.ingredients.some(i => i.name.toLowerCase() === ing.name.toLowerCase())
-  );
 
   // Filter suggestions to exclude already added
   const filteredSuggestions = suggestedIngredients.filter(
@@ -1999,35 +1977,6 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                   })}
                 </div>
               )}
-
-              {/* Search Existing Ingredients */}
-              <div className="mb-4">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search existing ingredients..."
-                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                />
-                {searchQuery && filteredIngredients.length > 0 && (
-                  <div className="mt-2 max-h-40 overflow-y-auto border border-slate-200 rounded-lg">
-                    {filteredIngredients.map((ing) => (
-                      <button
-                        key={ing.id}
-                        onClick={() => handleAddExistingIngredient(ing)}
-                        className="w-full px-4 py-2 text-left hover:bg-slate-50 flex items-center justify-between border-b border-slate-100 last:border-0"
-                      >
-                        <span className="font-medium text-slate-900">{ing.name}</span>
-                        {ing.contains_allergens.length > 0 && (
-                          <span className="text-xs text-amber-600">
-                            {ing.contains_allergens.join(', ')}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
 
               {/* Add New Ingredient */}
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">

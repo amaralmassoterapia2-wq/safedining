@@ -69,7 +69,7 @@ export default function CustomerMenu({ qrCode, onEditProfile, onExit }: Customer
       .eq('restaurant_id', restaurantData.id)
       .eq('is_active', true)
       .order('category')
-      .order('name');
+      .order('created_at');
 
     if (items) {
       const itemsWithData = await Promise.all(

@@ -13,7 +13,7 @@ export async function exportMenuToCSV(restaurantId: string, restaurantName: stri
     .eq('restaurant_id', restaurantId)
     .eq('is_active', true)
     .order('category')
-    .order('name');
+    .order('created_at');
 
   if (itemsError) throw itemsError;
   if (!items || items.length === 0) throw new Error('No menu items to export');

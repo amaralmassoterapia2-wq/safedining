@@ -396,7 +396,7 @@ export default function AllergenMatrixPreview({
         .eq('restaurant_id', restaurantId)
         .eq('is_active', true)
         .order('category')
-        .order('name');
+        .order('created_at');
 
       if (itemsError) throw itemsError;
       if (!items || items.length === 0) {
@@ -413,10 +413,10 @@ export default function AllergenMatrixPreview({
             .select('*, ingredient:ingredients(*)')
             .eq('menu_item_id', item.id);
 
-          // Fetch cooking steps for cross-contact risks
+          // Fetch cooking steps for cross-contact risks (including modifiability)
           const { data: cookingSteps } = await supabase
             .from('cooking_steps')
-            .select('cross_contact_risk')
+            .select('cross_contact_risk, is_modifiable, modifiable_allergens')
             .eq('menu_item_id', item.id);
 
           const ingredients = (menuItemIngredients || []).map((mii: any) => ({
@@ -427,9 +427,20 @@ export default function AllergenMatrixPreview({
           }));
 
           const crossContactRisks: string[] = [];
+          const modifiableCrossContactRisks: string[] = [];
           for (const step of cookingSteps || []) {
             for (const risk of step.cross_contact_risk || []) {
-              crossContactRisks.push(risk);
+              if (step.is_modifiable) {
+                // If the step is modifiable, check if this specific allergen is in modifiable_allergens
+                const modifiableAllergens = step.modifiable_allergens || [];
+                if (modifiableAllergens.length === 0 || modifiableAllergens.some((ma: string) => ma.toLowerCase() === risk.toLowerCase())) {
+                  modifiableCrossContactRisks.push(risk);
+                } else {
+                  crossContactRisks.push(risk);
+                }
+              } else {
+                crossContactRisks.push(risk);
+              }
             }
           }
 
@@ -442,14 +453,16 @@ export default function AllergenMatrixPreview({
                 cat.allergenAliases!,
                 item.description_allergens || [],
                 ingredients,
-                crossContactRisks
+                crossContactRisks,
+                modifiableCrossContactRisks
               );
             } else if (cat.type === 'dietary-style') {
               statuses[cat.key] = computeDietaryStyleStatus(
                 cat.key,
                 ingredients,
                 item.description_allergens || [],
-                crossContactRisks
+                crossContactRisks,
+                modifiableCrossContactRisks
               );
             } else if (cat.type === 'health-focused') {
               statuses[cat.key] = computeHealthFocusedStatus(cat.key, item);
@@ -741,7 +754,8 @@ function computeAllergenFreeStatus(
   allergenAliases: string[],
   descriptionAllergens: string[],
   ingredients: IngredientInfo[],
-  crossContactRisks: string[]
+  crossContactRisks: string[],
+  modifiableCrossContactRisks: string[] = []
 ): CategoryStatus {
   let hasBlocker = false;
   let hasModifiable = false;
@@ -754,7 +768,7 @@ function computeAllergenFreeStatus(
     }
   }
 
-  // 2. Cross-contact risks (cannot be modified)
+  // 2. Non-modifiable cross-contact risks (cannot be modified)
   for (const risk of crossContactRisks) {
     const lower = risk.toLowerCase();
     if (allergenAliases.some(alias => lower.includes(alias))) {
@@ -762,7 +776,15 @@ function computeAllergenFreeStatus(
     }
   }
 
-  // 3. Ingredient allergens
+  // 3. Modifiable cross-contact risks (can be adjusted by kitchen)
+  for (const risk of modifiableCrossContactRisks) {
+    const lower = risk.toLowerCase();
+    if (allergenAliases.some(alias => lower.includes(alias))) {
+      hasModifiable = true;
+    }
+  }
+
+  // 4. Ingredient allergens
   for (const ing of ingredients) {
     for (const ingAllergen of ing.allergens) {
       const lower = ingAllergen.toLowerCase();
@@ -804,7 +826,8 @@ function computeDietaryStyleStatus(
   categoryKey: string,
   ingredients: IngredientInfo[],
   descriptionAllergens: string[],
-  crossContactRisks: string[]
+  crossContactRisks: string[],
+  modifiableCrossContactRisks: string[] = []
 ): CategoryStatus {
   let hasBlocker = false;
   let hasModifiable = false;
@@ -847,7 +870,7 @@ function computeDietaryStyleStatus(
     }
   }
 
-  // 4. Check cooking step cross-contact risks (cannot be modified)
+  // 4. Check non-modifiable cooking step cross-contact risks
   for (const risk of crossContactRisks) {
     const lower = risk.toLowerCase();
     if (blockerAllergens.some(tag => lower.includes(tag))) {
@@ -855,7 +878,15 @@ function computeDietaryStyleStatus(
     }
   }
 
-  // 5. Check ingredient names and allergen tags per dietary style
+  // 5. Check modifiable cooking step cross-contact risks
+  for (const risk of modifiableCrossContactRisks) {
+    const lower = risk.toLowerCase();
+    if (blockerAllergens.some(tag => lower.includes(tag))) {
+      hasModifiable = true;
+    }
+  }
+
+  // 6. Check ingredient names and allergen tags per dietary style
   switch (categoryKey) {
     case 'vegetarian':
       // No meat, fish, seafood, or gelatin

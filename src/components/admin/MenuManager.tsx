@@ -36,7 +36,7 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
       .select('*')
       .eq('restaurant_id', restaurantId)
       .order('category', { ascending: true })
-      .order('name', { ascending: true });
+      .order('created_at', { ascending: true });
 
     if (!error && data) {
       // Load allergens for each item from all sources

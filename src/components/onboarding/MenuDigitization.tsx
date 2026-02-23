@@ -94,6 +94,7 @@ export default function MenuDigitization({ restaurantId, onComplete }: MenuDigit
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const resolvedDishesRef = useRef<ScannedDish[] | null>(null);
 
   // Load existing menu items on mount
   useEffect(() => {
@@ -200,6 +201,7 @@ export default function MenuDigitization({ restaurantId, onComplete }: MenuDigit
     setConflicts([]);
     setPreviewImage(null);
     setError('');
+    resolvedDishesRef.current = null;
   };
 
   const handleConflictAction = (dishId: string, action: 'override' | 'keep') => {
@@ -261,13 +263,16 @@ export default function MenuDigitization({ restaurantId, onComplete }: MenuDigit
     );
     finalDishes.push(...newDishesWithoutConflicts);
 
+    // Store in ref to avoid stale closure issues
+    resolvedDishesRef.current = finalDishes;
     setShowConflictResolution(false);
     setScanned(true);
     setDishes(finalDishes);
   };
 
   const handleContinue = () => {
-    onComplete(dishes);
+    // Use ref as primary source to avoid stale state after conflict resolution
+    onComplete(resolvedDishesRef.current || dishes);
   };
 
   const conflictsWithMatches = conflicts.filter((c) => c.existingItem !== null);
