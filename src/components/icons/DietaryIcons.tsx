@@ -92,6 +92,44 @@ export const VegetarianIcon: React.FC<IconProps> = ({ className = '', size = 24 
   </svg>
 );
 
+export const FishFreeIcon: React.FC<IconProps> = ({ className = '', size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+    <path
+      d="M2 12C2 12 6 6 13 6C13 6 11 9 11 12C11 15 13 18 13 18C6 18 2 12 2 12Z"
+      fill="currentColor"
+      opacity="0.2"
+    />
+    <path
+      d="M2 12C2 12 6 6 13 6C13 6 11 9 11 12C11 15 13 18 13 18C6 18 2 12 2 12Z"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M18 7L22 12L18 17V7Z"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="7" cy="12" r="1" fill="currentColor" />
+    <line x1="4" y1="20" x2="20" y2="4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+  </svg>
+);
+
+export const SesameAllergyIcon: React.FC<IconProps> = ({ className = '', size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+    <ellipse cx="12" cy="12" rx="4" ry="6" fill="currentColor" opacity="0.2" />
+    <ellipse cx="12" cy="12" rx="4" ry="6" stroke="currentColor" strokeWidth="2" />
+    <circle cx="11" cy="9" r="0.8" fill="currentColor" />
+    <circle cx="13" cy="11" r="0.8" fill="currentColor" />
+    <circle cx="11" cy="13" r="0.8" fill="currentColor" />
+    <circle cx="13" cy="15" r="0.8" fill="currentColor" />
+    <line x1="4" y1="20" x2="20" y2="4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+  </svg>
+);
+
 export const ShellfishFreeIcon: React.FC<IconProps> = ({ className = '', size = 24 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
     <path
@@ -207,7 +245,9 @@ export const getDietaryIcon = (restriction: string, size: number = 20): React.Re
   if (lowerRestriction.includes('nut') || lowerRestriction.includes('peanut')) return <NutFreeIcon size={size} className={className} />;
   if (lowerRestriction.includes('vegan')) return <VeganIcon size={size} className={className} />;
   if (lowerRestriction.includes('vegetarian')) return <VegetarianIcon size={size} className={className} />;
+  if (lowerRestriction.includes('fish') && !lowerRestriction.includes('shellfish')) return <FishFreeIcon size={size} className={className} />;
   if (lowerRestriction.includes('shellfish') || lowerRestriction.includes('seafood')) return <ShellfishFreeIcon size={size} className={className} />;
+  if (lowerRestriction.includes('sesame')) return <SesameAllergyIcon size={size} className={className} />;
   if (lowerRestriction.includes('soy')) return <SoyFreeIcon size={size} className={className} />;
   if (lowerRestriction.includes('egg')) return <EggFreeIcon size={size} className={className} />;
   if (lowerRestriction.includes('kosher')) return <KosherIcon size={size} className={className} />;
