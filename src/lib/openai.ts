@@ -290,7 +290,9 @@ Rules:
  * Uses comprehensive allergen mapping to correctly identify allergen categories
  */
 export async function detectAllergens(ingredientName: string): Promise<string[]> {
+  console.log('[detectAllergens] Called for ingredient:', ingredientName);
   if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
+    console.log('[detectAllergens] No API key set, returning []');
     return [];
   }
 
@@ -345,8 +347,11 @@ EXAMPLES:
 - "mayo" -> ["Eggs"] (NOT Milk)
 - "aioli" -> ["Eggs"] (garlic mayo, NOT Milk)
 - "olive oil" -> []
-- "garlic" -> []
-- "onion" -> []
+- "garlic" -> ["Garlic"]
+- "onion" -> ["Onion"]
+- "shallots" -> ["Onion"]
+- "leek" -> ["Onion"]
+- "scallion" -> ["Onion"]
 - "chickpeas" -> []
 - "black beans" -> []
 - "rice" -> []
@@ -373,18 +378,23 @@ What allergen categories does this ingredient belong to? Return only the JSON ar
 
     const data = await response.json();
     const content: string = data.choices[0]?.message?.content || '[]';
+    console.log('[detectAllergens] AI raw response for "' + ingredientName + '":', content);
 
     // Parse JSON array
     const jsonMatch = content.match(/\[[\s\S]*?\]/);
     if (jsonMatch) {
       const allergens: string[] = JSON.parse(jsonMatch[0]);
+      console.log('[detectAllergens] Parsed allergens:', allergens);
       // Validate that returned allergens are from our valid list
       if (Array.isArray(allergens)) {
-        return allergens
+        const validated = allergens
           .filter((a): a is string => typeof a === 'string')
           .filter(isValidAllergen);
+        console.log('[detectAllergens] After validation:', validated);
+        return validated;
       }
     }
+    console.log('[detectAllergens] No valid JSON match found, returning []');
     return [];
   } catch (error) {
     console.error('Error detecting allergens:', error);

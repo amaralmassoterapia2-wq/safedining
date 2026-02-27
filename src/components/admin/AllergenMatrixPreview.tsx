@@ -14,6 +14,7 @@ const CATEGORIES = [
   { key: 'soy', label: 'Soy', type: 'allergen' as const, allergenAliases: ['soy', 'soybean', 'soya', 'tofu', 'edamame'] },
   { key: 'fish', label: 'Fish', type: 'allergen' as const, allergenAliases: ['fish', 'salmon', 'tuna', 'cod', 'halibut', 'anchovy', 'sardine', 'trout', 'tilapia'] },
   { key: 'sesame', label: 'Sesame', type: 'allergen' as const, allergenAliases: ['sesame', 'tahini'] },
+  { key: 'onion', label: 'Onion', type: 'allergen' as const, allergenAliases: ['onion', 'onions', 'shallot', 'shallots', 'scallion', 'leek'] },
   { key: 'vegetarian', label: 'Vegetarian', type: 'dietary-style' as const },
   { key: 'vegan', label: 'Vegan', type: 'dietary-style' as const },
   { key: 'pescatarian', label: 'Pescatarian', type: 'dietary-style' as const },
@@ -105,6 +106,13 @@ const CategoryIcons: Record<string, React.FC<{ size?: number }>> = {
       <ellipse cx="17" cy="10" rx="2" ry="3" fill="#FFF8E1" stroke="#FF8F00" strokeWidth="1.5"/>
       <ellipse cx="8" cy="16" rx="2" ry="3" fill="#FFF8E1" stroke="#FF8F00" strokeWidth="1.5"/>
       <ellipse cx="16" cy="16" rx="2" ry="3" fill="#FFF8E1" stroke="#FF8F00" strokeWidth="1.5"/>
+    </svg>
+  ),
+  'onion': ({ size = 28 }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <ellipse cx="12" cy="14" rx="6" ry="7" fill="#F3E5F5" stroke="#7B1FA2" strokeWidth="1.5"/>
+      <path d="M12 7c-1-2-1-4 0-5 1 1 1 3 0 5z" fill="#CE93D8" stroke="#7B1FA2" strokeWidth="1"/>
+      <path d="M9 12c0 2 1.5 3 3 3s3-1 3-3" stroke="#7B1FA2" strokeWidth="1" strokeLinecap="round"/>
     </svg>
   ),
   'vegetarian': ({ size = 28 }) => (

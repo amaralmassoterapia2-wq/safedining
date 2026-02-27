@@ -431,13 +431,21 @@ export default function MenuDigitization({ restaurantId, onComplete }: MenuDigit
                       <div className="flex gap-2">
                         <button
                           onClick={() => handleBulkAction('override')}
-                          className="px-3 py-1.5 text-xs font-semibold bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200 transition-colors"
+                          className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                            conflictsWithMatches.length > 0 && conflictsWithMatches.every(c => c.action === 'override')
+                              ? 'bg-blue-600 text-white ring-2 ring-blue-300'
+                              : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                          }`}
                         >
                           Override All
                         </button>
                         <button
                           onClick={() => handleBulkAction('keep')}
-                          className="px-3 py-1.5 text-xs font-semibold bg-slate-100 text-slate-800 rounded-lg hover:bg-slate-200 transition-colors"
+                          className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                            conflictsWithMatches.length > 0 && conflictsWithMatches.every(c => c.action === 'keep')
+                              ? 'bg-slate-600 text-white ring-2 ring-slate-300'
+                              : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+                          }`}
                         >
                           Keep All Existing
                         </button>

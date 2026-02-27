@@ -460,11 +460,13 @@ INSERT INTO dietary_restrictions (name, allergens, description) VALUES
   ('Gluten-Free', ARRAY['wheat', 'barley', 'rye', 'flour', 'bread', 'pasta', 'gluten'], 'Avoid gluten-containing grains'),
   ('Dairy-Free', ARRAY['milk', 'cheese', 'butter', 'cream', 'dairy', 'whey', 'casein'], 'Avoid all dairy products'),
   ('Nut Allergy', ARRAY['peanuts', 'almonds', 'walnuts', 'cashews', 'pecans', 'pistachios', 'nuts', 'nut'], 'Severe nut allergies'),
-  ('Shellfish Allergy', ARRAY['shrimp', 'crab', 'lobster', 'shellfish', 'seafood'], 'Allergic to shellfish'),
+  ('Shellfish Allergy', ARRAY['shrimp', 'crab', 'lobster', 'crayfish', 'prawn', 'clam', 'mussel', 'oyster', 'scallop', 'squid', 'calamari', 'octopus', 'shellfish', 'seafood', 'mollusks'], 'Allergic to shellfish and mollusks'),
   ('Egg-Free', ARRAY['egg', 'eggs', 'mayonnaise'], 'Avoid eggs and egg products'),
   ('Soy-Free', ARRAY['soy', 'tofu', 'edamame', 'soy sauce'], 'Avoid soy products'),
   ('Fish Allergy', ARRAY['fish', 'salmon', 'tuna', 'cod', 'halibut'], 'Allergic to fish'),
   ('Sesame Allergy', ARRAY['sesame', 'tahini'], 'Allergic to sesame seeds'),
   ('Vegan', ARRAY['meat', 'dairy', 'egg', 'honey', 'gelatin'], 'Plant-based diet'),
-  ('Vegetarian', ARRAY['meat', 'chicken', 'beef', 'pork', 'fish'], 'No meat or fish')
+  ('Vegetarian', ARRAY['meat', 'chicken', 'beef', 'pork', 'fish'], 'No meat or fish'),
+  ('Kosher', ARRAY['pork', 'bacon', 'ham', 'lard', 'shrimp', 'crab', 'lobster', 'crayfish', 'prawn', 'clam', 'mussel', 'oyster', 'scallop', 'squid', 'calamari', 'octopus', 'shellfish', 'mollusks'], 'Kosher dietary laws - no pork or shellfish/mollusks'),
+  ('Halal', ARRAY['pork', 'bacon', 'ham', 'lard', 'alcohol', 'wine', 'beer', 'rum', 'gelatin'], 'Halal dietary laws - no pork or alcohol')
 ON CONFLICT (name) DO NOTHING;

@@ -270,14 +270,11 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
 
   const loadRecentlyCompletedDishes = async () => {
     try {
-      // Get menu items updated in the last 3 hours
-      const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-
+      // Get all existing menu items for this restaurant
       const { data: menuItems } = await supabase
         .from('menu_items')
         .select('*')
-        .eq('restaurant_id', restaurantId)
-        .gte('updated_at', threeHoursAgo);
+        .eq('restaurant_id', restaurantId);
 
       if (!menuItems || menuItems.length === 0) {
         setLoadingExistingDishes(false);
@@ -308,37 +305,60 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             .select('*, substitute:ingredients(*)')
             .in('menu_item_ingredient_id', miiIds) : { data: [] };
 
-          const ingredients: SelectedIngredient[] = (menuItemIngredients || []).map((mii: {
-            id: string;
-            ingredient_id: string;
-            amount_value: number | null;
-            amount_unit: WeightUnit | null;
-            is_removable: boolean;
-            is_substitutable: boolean;
-            ingredient: Ingredient;
-          }) => {
-            // Find substitutes for this menu_item_ingredient
-            const subs = (substitutesData || [])
-              .filter((s: { menu_item_ingredient_id: string }) => s.menu_item_ingredient_id === mii.id)
-              .map((s: { substitute_ingredient_id: string; substitute: Ingredient }) => ({
-                ingredientId: s.substitute_ingredient_id,
-                name: s.substitute?.name || '',
-                allergens: s.substitute?.contains_allergens || [],
-                isNew: false,
-              }));
+          const ingredients: SelectedIngredient[] = await Promise.all(
+            (menuItemIngredients || []).map(async (mii: {
+              id: string;
+              ingredient_id: string;
+              amount_value: number | null;
+              amount_unit: WeightUnit | null;
+              is_removable: boolean;
+              is_substitutable: boolean;
+              ingredient: Ingredient;
+            }) => {
+              // Find substitutes for this menu_item_ingredient
+              const subs = (substitutesData || [])
+                .filter((s: { menu_item_ingredient_id: string }) => s.menu_item_ingredient_id === mii.id)
+                .map((s: { substitute_ingredient_id: string; substitute: Ingredient }) => ({
+                  ingredientId: s.substitute_ingredient_id,
+                  name: s.substitute?.name || '',
+                  allergens: s.substitute?.contains_allergens || [],
+                  isNew: false,
+                }));
 
-            return {
-              ingredientId: mii.ingredient_id,
-              name: mii.ingredient?.name || '',
-              amountValue: mii.amount_value,
-              amountUnit: mii.amount_unit,
-              allergens: mii.ingredient?.contains_allergens || [],
-              isNew: false,
-              isRemovable: mii.is_removable || false,
-              isSubstitutable: mii.is_substitutable || false,
-              substitutes: subs,
-            };
-          });
+              let allergens = mii.ingredient?.contains_allergens || [];
+
+              // Re-detect allergens for ingredients with empty allergens
+              if (allergens.length === 0 && mii.ingredient?.name) {
+                console.log('[loadRecentlyCompleted] Re-detecting allergens for:', mii.ingredient.name);
+                try {
+                  const detected = await detectAllergens(mii.ingredient.name);
+                  if (detected.length > 0) {
+                    allergens = detected;
+                    // Update the DB record
+                    await supabase
+                      .from('ingredients')
+                      .update({ contains_allergens: detected })
+                      .eq('id', mii.ingredient_id);
+                    console.log('[loadRecentlyCompleted] Updated', mii.ingredient.name, 'with allergens:', detected);
+                  }
+                } catch (err) {
+                  console.error('[loadRecentlyCompleted] Re-detection failed for', mii.ingredient.name, err);
+                }
+              }
+
+              return {
+                ingredientId: mii.ingredient_id,
+                name: mii.ingredient?.name || '',
+                amountValue: mii.amount_value,
+                amountUnit: mii.amount_unit,
+                allergens,
+                isNew: false,
+                isRemovable: mii.is_removable || false,
+                isSubstitutable: mii.is_substitutable || false,
+                substitutes: subs,
+              };
+            })
+          );
 
           existingData[matchingDish.id] = {
             menuItemId: item.id,
@@ -391,6 +411,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
           allergens: i.contains_allergens,
         }))
       );
+      console.log('[loadSuggestions] AI suggestions:', suggestions.map(s => ({ name: s.name, allergens: s.allergens, existingId: s.existingId })));
       setSuggestedIngredients(suggestions);
     } catch (err) {
       console.error('Error loading suggestions:', err);
@@ -507,7 +528,8 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     }
   };
 
-  const handleAddSuggestedIngredient = (suggestion: SuggestedIngredient) => {
+  const handleAddSuggestedIngredient = async (suggestion: SuggestedIngredient) => {
+    console.log('[handleAddSuggested] Suggestion:', suggestion.name, 'AI allergens:', suggestion.allergens, 'existingId:', suggestion.existingId);
     // If suggestion has an existing ID, use the allergens from our local state
     // (which may have been updated with custom allergens)
     let allergens = suggestion.allergens;
@@ -515,6 +537,38 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       const existingIng = existingIngredients.find(ing => ing.id === suggestion.existingId);
       if (existingIng) {
         allergens = existingIng.contains_allergens;
+        // If DB has empty allergens but AI suggestion has them, use AI's and update DB
+        if (allergens.length === 0 && suggestion.allergens.length > 0) {
+          console.log('[handleAddSuggested] DB allergens empty, using AI allergens:', suggestion.allergens);
+          allergens = suggestion.allergens;
+          await supabase
+            .from('ingredients')
+            .update({ contains_allergens: allergens })
+            .eq('id', existingIng.id);
+          setExistingIngredients(prev =>
+            prev.map(ing => ing.id === existingIng.id
+              ? { ...ing, contains_allergens: allergens }
+              : ing
+            )
+          );
+        } else if (allergens.length === 0) {
+          // Both DB and suggestion have empty allergens — re-detect
+          console.log('[handleAddSuggested] Both empty, re-detecting for:', suggestion.name);
+          const detected = await detectAllergens(suggestion.name);
+          if (detected.length > 0) {
+            allergens = detected;
+            await supabase
+              .from('ingredients')
+              .update({ contains_allergens: allergens })
+              .eq('id', existingIng.id);
+            setExistingIngredients(prev =>
+              prev.map(ing => ing.id === existingIng.id
+                ? { ...ing, contains_allergens: allergens }
+                : ing
+              )
+            );
+          }
+        }
       }
     } else {
       // Check if ingredient exists by name (case-insensitive)
@@ -522,12 +576,44 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
         ing => ing.name.toLowerCase() === suggestion.name.toLowerCase()
       );
       if (existingByName) {
+        let existingAllergens = existingByName.contains_allergens;
+        // If DB has empty allergens but AI suggestion has them, prefer AI's
+        if (existingAllergens.length === 0 && suggestion.allergens.length > 0) {
+          console.log('[handleAddSuggested] DB allergens empty for', existingByName.name, ', using AI allergens:', suggestion.allergens);
+          existingAllergens = suggestion.allergens;
+          await supabase
+            .from('ingredients')
+            .update({ contains_allergens: existingAllergens })
+            .eq('id', existingByName.id);
+          setExistingIngredients(prev =>
+            prev.map(ing => ing.id === existingByName.id
+              ? { ...ing, contains_allergens: existingAllergens }
+              : ing
+            )
+          );
+        } else if (existingAllergens.length === 0) {
+          console.log('[handleAddSuggested] Both empty, re-detecting for:', existingByName.name);
+          const detected = await detectAllergens(existingByName.name);
+          if (detected.length > 0) {
+            existingAllergens = detected;
+            await supabase
+              .from('ingredients')
+              .update({ contains_allergens: existingAllergens })
+              .eq('id', existingByName.id);
+            setExistingIngredients(prev =>
+              prev.map(ing => ing.id === existingByName.id
+                ? { ...ing, contains_allergens: existingAllergens }
+                : ing
+              )
+            );
+          }
+        }
         addIngredient({
           ingredientId: existingByName.id,
           name: existingByName.name,
           amountValue: null,
           amountUnit: 'g',
-          allergens: existingByName.contains_allergens,
+          allergens: existingAllergens,
           isNew: false,
           isRemovable: false,
           isSubstitutable: false,
@@ -537,6 +623,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       }
     }
 
+    console.log('[handleAddSuggested] Adding with allergens:', allergens);
     addIngredient({
       ingredientId: suggestion.existingId,
       name: suggestion.name,
@@ -561,14 +648,44 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     );
 
     if (existingIngredient) {
-      // Use existing ingredient with its saved allergens
+      console.log('[DishDetailsInput] Found existing ingredient:', existingIngredient.name, 'with allergens:', existingIngredient.contains_allergens);
+      let allergens = existingIngredient.contains_allergens;
+
+      // If existing ingredient has no allergens, re-detect them
+      if (allergens.length === 0) {
+        console.log('[DishDetailsInput] Existing ingredient has no allergens, re-detecting...');
+        setDetectingAllergens(true);
+        try {
+          allergens = await detectAllergens(existingIngredient.name);
+          console.log('[DishDetailsInput] Re-detected allergens:', allergens);
+          // Update the DB record so future lookups have correct allergens
+          if (allergens.length > 0) {
+            await supabase
+              .from('ingredients')
+              .update({ contains_allergens: allergens })
+              .eq('id', existingIngredient.id);
+            // Update local state
+            setExistingIngredients(prev =>
+              prev.map(ing => ing.id === existingIngredient.id
+                ? { ...ing, contains_allergens: allergens }
+                : ing
+              )
+            );
+          }
+        } catch (err) {
+          console.error('[DishDetailsInput] Re-detection failed:', err);
+        } finally {
+          setDetectingAllergens(false);
+        }
+      }
+
       const amountVal = newIngredientAmountValue ? parseFloat(newIngredientAmountValue) : null;
       addIngredient({
         ingredientId: existingIngredient.id,
         name: existingIngredient.name,
         amountValue: amountVal,
         amountUnit: newIngredientAmountUnit,
-        allergens: existingIngredient.contains_allergens,
+        allergens,
         isNew: false,
         isRemovable: false,
         isSubstitutable: false,
@@ -580,10 +697,12 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       return;
     }
 
+    console.log('[DishDetailsInput] New ingredient, calling detectAllergens for:', trimmedName);
     setDetectingAllergens(true);
     try {
       // Detect allergens for the new ingredient
       const allergens = await detectAllergens(trimmedName);
+      console.log('[DishDetailsInput] detectAllergens returned:', allergens);
 
       const amountVal = newIngredientAmountValue ? parseFloat(newIngredientAmountValue) : null;
 

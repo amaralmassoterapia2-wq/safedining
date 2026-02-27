@@ -127,44 +127,103 @@ export default function DietaryProfileSetup({ onComplete }: DietaryProfileSetupP
 
           {/* Card Content */}
           <form onSubmit={handleSubmit} className="p-6 space-y-6">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-4 uppercase tracking-wide">
-                Dietary Restrictions
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                {restrictions.map((restriction) => {
-                  const isSelected = selectedRestrictions.includes(restriction.name);
-                  return (
-                    <button
-                      key={restriction.id}
-                      type="button"
-                      onClick={() => toggleRestriction(restriction.name)}
-                      className={`relative p-4 border-2 rounded-xl text-left transition-all ${
-                        isSelected
-                          ? 'border-emerald-500 bg-emerald-50 shadow-md'
-                          : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                      }`}
-                    >
-                      {isSelected && (
-                        <div className="absolute top-3 right-3">
-                          <div className="bg-emerald-500 text-white rounded-full p-1 shadow-sm">
-                            <Check className="w-3 h-3" />
-                          </div>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-3 mb-1">
-                        <div className={`p-2 rounded-lg ${isSelected ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
-                          {getDietaryIcon(restriction.name, 20)}
-                        </div>
-                        <div className="font-semibold text-slate-900">{restriction.name}</div>
-                      </div>
-                      {restriction.description && (
-                        <div className="text-xs text-slate-500 ml-11">{restriction.description}</div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+            <div className="space-y-5">
+              {[
+                { label: 'Allergies', names: ['Nut Allergy', 'Shellfish Allergy', 'Fish Allergy', 'Sesame Allergy'] },
+                { label: 'Dietary Preferences', names: ['Gluten-Free', 'Dairy-Free', 'Egg-Free', 'Soy-Free'] },
+                { label: 'Lifestyle', names: ['Vegan', 'Vegetarian', 'Kosher', 'Halal'] },
+              ].map(({ label, names }) => {
+                const groupRestrictions = restrictions.filter(r => names.includes(r.name));
+                if (groupRestrictions.length === 0) return null;
+                return (
+                  <div key={label}>
+                    <label className="block text-sm font-semibold text-slate-700 mb-3 uppercase tracking-wide">
+                      {label}
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {groupRestrictions.map((restriction) => {
+                        const isSelected = selectedRestrictions.includes(restriction.name);
+                        return (
+                          <button
+                            key={restriction.id}
+                            type="button"
+                            onClick={() => toggleRestriction(restriction.name)}
+                            className={`relative p-4 border-2 rounded-xl text-left transition-all ${
+                              isSelected
+                                ? 'border-emerald-500 bg-emerald-50 shadow-md'
+                                : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                            }`}
+                          >
+                            {isSelected && (
+                              <div className="absolute top-3 right-3">
+                                <div className="bg-emerald-500 text-white rounded-full p-1 shadow-sm">
+                                  <Check className="w-3 h-3" />
+                                </div>
+                              </div>
+                            )}
+                            <div className="flex items-center gap-3 mb-1">
+                              <div className={`p-2 rounded-lg ${isSelected ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                                {getDietaryIcon(restriction.name, 20)}
+                              </div>
+                              <div className="font-semibold text-slate-900">{restriction.name}</div>
+                            </div>
+                            {restriction.description && (
+                              <div className="text-xs text-slate-500 ml-11">{restriction.description}</div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              {/* Show any restrictions not in the predefined groups */}
+              {(() => {
+                const knownNames = ['Nut Allergy', 'Shellfish Allergy', 'Fish Allergy', 'Sesame Allergy', 'Gluten-Free', 'Dairy-Free', 'Egg-Free', 'Soy-Free', 'Vegan', 'Vegetarian', 'Kosher', 'Halal'];
+                const otherRestrictions = restrictions.filter(r => !knownNames.includes(r.name));
+                if (otherRestrictions.length === 0) return null;
+                return (
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-3 uppercase tracking-wide">
+                      Other
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {otherRestrictions.map((restriction) => {
+                        const isSelected = selectedRestrictions.includes(restriction.name);
+                        return (
+                          <button
+                            key={restriction.id}
+                            type="button"
+                            onClick={() => toggleRestriction(restriction.name)}
+                            className={`relative p-4 border-2 rounded-xl text-left transition-all ${
+                              isSelected
+                                ? 'border-emerald-500 bg-emerald-50 shadow-md'
+                                : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                            }`}
+                          >
+                            {isSelected && (
+                              <div className="absolute top-3 right-3">
+                                <div className="bg-emerald-500 text-white rounded-full p-1 shadow-sm">
+                                  <Check className="w-3 h-3" />
+                                </div>
+                              </div>
+                            )}
+                            <div className="flex items-center gap-3 mb-1">
+                              <div className={`p-2 rounded-lg ${isSelected ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                                {getDietaryIcon(restriction.name, 20)}
+                              </div>
+                              <div className="font-semibold text-slate-900">{restriction.name}</div>
+                            </div>
+                            {restriction.description && (
+                              <div className="text-xs text-slate-500 ml-11">{restriction.description}</div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="pt-2">

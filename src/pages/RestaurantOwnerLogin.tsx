@@ -126,7 +126,22 @@ export default function RestaurantOwnerLogin({ onLoginSuccess, onBackToGuest }: 
         if (restaurantError) throw restaurantError;
 
         if (!restaurant) {
-          throw new Error('No restaurant found for this account');
+          // No restaurant yet — create one and send to onboarding
+          const qrCode = `REST-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+          const restaurantCode = String(Math.floor(1000 + Math.random() * 9000));
+
+          const { data: newRestaurantId, error: createError } = await supabase
+            .rpc('create_restaurant_for_user', {
+              p_name: email.split('@')[0] + "'s restaurant",
+              p_owner_id: authData.user.id,
+              p_qr_code: qrCode,
+              p_restaurant_code: restaurantCode,
+            });
+
+          if (createError) throw createError;
+
+          onLoginSuccess(newRestaurantId, true);
+          return;
         }
 
         onLoginSuccess(restaurant.id);
