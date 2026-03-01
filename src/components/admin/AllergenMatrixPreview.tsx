@@ -462,7 +462,8 @@ export default function AllergenMatrixPreview({
                 item.description_allergens || [],
                 ingredients,
                 crossContactRisks,
-                modifiableCrossContactRisks
+                modifiableCrossContactRisks,
+                item.name
               );
             } else if (cat.type === 'dietary-style') {
               statuses[cat.key] = computeDietaryStyleStatus(
@@ -758,20 +759,27 @@ interface IngredientInfo {
   isSubstitutable: boolean;
 }
 
+const isDev = import.meta.env.VITE_ENV === 'development';
+
 function computeAllergenFreeStatus(
   allergenAliases: string[],
   descriptionAllergens: string[],
   ingredients: IngredientInfo[],
   crossContactRisks: string[],
-  modifiableCrossContactRisks: string[] = []
+  modifiableCrossContactRisks: string[] = [],
+  dishName?: string
 ): CategoryStatus {
+  const log = (...args: any[]) => { if (isDev) console.log('[AllergenMatrix]', ...args); };
   let hasBlocker = false;
   let hasModifiable = false;
+
+  log(`\n--- "${dishName}" checking [${allergenAliases[0]}] ---`);
 
   // 1. Description allergens (cannot be modified)
   for (const descAllergen of descriptionAllergens) {
     const lower = descAllergen.toLowerCase();
     if (allergenAliases.some(alias => lower.includes(alias))) {
+      log(`  ⛔ BLOCKER: description allergen "${descAllergen}" matches [${allergenAliases[0]}]`);
       hasBlocker = true;
     }
   }
@@ -780,6 +788,7 @@ function computeAllergenFreeStatus(
   for (const risk of crossContactRisks) {
     const lower = risk.toLowerCase();
     if (allergenAliases.some(alias => lower.includes(alias))) {
+      log(`  ⛔ BLOCKER: non-modifiable cross-contact "${risk}" matches [${allergenAliases[0]}]`);
       hasBlocker = true;
     }
   }
@@ -788,6 +797,7 @@ function computeAllergenFreeStatus(
   for (const risk of modifiableCrossContactRisks) {
     const lower = risk.toLowerCase();
     if (allergenAliases.some(alias => lower.includes(alias))) {
+      log(`  ✅ MODIFIABLE: cross-contact "${risk}" is modifiable for [${allergenAliases[0]}]`);
       hasModifiable = true;
     }
   }
@@ -798,8 +808,10 @@ function computeAllergenFreeStatus(
       const lower = ingAllergen.toLowerCase();
       if (allergenAliases.some(alias => lower.includes(alias))) {
         if (ing.isRemovable || ing.isSubstitutable) {
+          log(`  ✅ MODIFIABLE: ingredient "${ing.name}" (allergen: "${ingAllergen}") is removable=${ing.isRemovable} substitutable=${ing.isSubstitutable}`);
           hasModifiable = true;
         } else {
+          log(`  ⛔ BLOCKER: ingredient "${ing.name}" (allergen: "${ingAllergen}") is NOT removable/substitutable`);
           hasBlocker = true;
         }
       }
@@ -808,16 +820,18 @@ function computeAllergenFreeStatus(
     const ingNameLower = ing.name.toLowerCase();
     if (allergenAliases.some(alias => ingNameLower.includes(alias))) {
       if (ing.isRemovable || ing.isSubstitutable) {
+        log(`  ✅ MODIFIABLE: ingredient name "${ing.name}" matches [${allergenAliases[0]}], removable=${ing.isRemovable}`);
         hasModifiable = true;
       } else {
+        log(`  ⛔ BLOCKER: ingredient name "${ing.name}" matches [${allergenAliases[0]}], NOT removable/substitutable`);
         hasBlocker = true;
       }
     }
   }
 
-  if (hasBlocker) return 'not_compatible';
-  if (hasModifiable) return 'can_modify';
-  return 'compatible';
+  const result = hasBlocker ? 'not_compatible' : hasModifiable ? 'can_modify' : 'compatible';
+  log(`  → RESULT: ${result} (hasBlocker=${hasBlocker}, hasModifiable=${hasModifiable})`);
+  return result;
 }
 
 // Map dietary-style categories to description allergen tags that indicate non-compliance

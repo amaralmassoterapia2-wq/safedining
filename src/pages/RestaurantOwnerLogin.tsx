@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { ChefHat, Mail, Lock, Building2, ArrowLeft, MailCheck } from 'lucide-react';
+import { ChefHat, Mail, Lock, Building2, ArrowLeft, MailCheck, Wrench } from 'lucide-react';
 
 interface RestaurantOwnerLoginProps {
   onLoginSuccess: (restaurantId: string, isNewSignup?: boolean) => void;
   onBackToGuest: () => void;
+  onOpenDevPanel?: () => void;
 }
 
-export default function RestaurantOwnerLogin({ onLoginSuccess, onBackToGuest }: RestaurantOwnerLoginProps) {
+const isDev = import.meta.env.VITE_ENV === 'development';
+
+export default function RestaurantOwnerLogin({ onLoginSuccess, onBackToGuest, onOpenDevPanel }: RestaurantOwnerLoginProps) {
   const [mode, setMode] = useState<'login' | 'register' | 'verify'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -153,10 +156,23 @@ export default function RestaurantOwnerLogin({ onLoginSuccess, onBackToGuest }: 
     }
   };
 
+  const devPanelButton = isDev && onOpenDevPanel ? (
+    <div className="absolute top-4 right-4">
+      <button
+        onClick={onOpenDevPanel}
+        className="flex items-center gap-2 px-4 py-2 bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-lg hover:bg-amber-500/30 transition-colors text-sm font-medium"
+      >
+        <Wrench className="w-4 h-4" />
+        Dev Panel
+      </button>
+    </div>
+  ) : null;
+
   // Email verification screen
   if (mode === 'verify') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4 relative">
+        {devPanelButton}
         <div className="bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 p-8 w-full max-w-md">
           <div className="flex items-center justify-center mb-6">
             <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-4 rounded-2xl">
@@ -220,7 +236,8 @@ export default function RestaurantOwnerLogin({ onLoginSuccess, onBackToGuest }: 
 
   if (mode === 'register') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4 relative">
+        {devPanelButton}
         <div className="bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 p-8 w-full max-w-md">
           <button
             onClick={() => setMode('login')}
@@ -323,7 +340,8 @@ export default function RestaurantOwnerLogin({ onLoginSuccess, onBackToGuest }: 
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4 relative">
+      {devPanelButton}
       <div className="bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 p-8 w-full max-w-md">
         <div className="flex items-center justify-center mb-6">
           <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-4 rounded-2xl">

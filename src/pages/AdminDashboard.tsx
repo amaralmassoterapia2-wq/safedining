@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { LogOut, Plus, BarChart3, X, Copy, Check, FileSpreadsheet, Share2 } from 'lucide-react';
+import { LogOut, Plus, BarChart3, X, Copy, Check, FileSpreadsheet, Share2, Wrench, Loader2 } from 'lucide-react';
+import { isImpersonating, exitImpersonation } from '../lib/devAuth';
 import RestaurantSetup from '../components/admin/RestaurantSetup';
 import MenuManager from '../components/admin/MenuManager';
 import AccessibilityDashboard from '../components/admin/AccessibilityDashboard';
@@ -19,9 +20,12 @@ type Tab = 'menu' | 'dashboard';
 
 interface AdminDashboardProps {
   onBackToGuest?: () => void;
+  onOpenDevPanel?: () => void;
 }
 
-export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = {}) {
+const isDev = import.meta.env.VITE_ENV === 'development';
+
+export default function AdminDashboard({ onBackToGuest, onOpenDevPanel }: AdminDashboardProps = {}) {
   const { user, signOut } = useAuth();
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,6 +33,17 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
   const [showShareModal, setShowShareModal] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showAllergenMatrix, setShowAllergenMatrix] = useState(false);
+  const [exitingImpersonation, setExitingImpersonation] = useState(false);
+
+  const handleExitImpersonation = async () => {
+    setExitingImpersonation(true);
+    const { error } = await exitImpersonation();
+    if (error) {
+      console.error('Failed to exit impersonation:', error);
+      setExitingImpersonation(false);
+    }
+    // Auth state change will trigger reload automatically
+  };
 
   const handleSignOut = async () => {
     await signOut();
@@ -81,6 +96,31 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      {isImpersonating() && (
+        <div className="bg-amber-500/20 border-b border-amber-500/30 px-4 py-2">
+          <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-2 text-amber-400 text-sm font-medium">
+              <Wrench className="w-4 h-4" />
+              Impersonating: <span className="font-bold">{restaurant?.name}</span>
+              <span className="text-amber-500/60 text-xs">({user?.email})</span>
+            </div>
+            <button
+              onClick={handleExitImpersonation}
+              disabled={exitingImpersonation}
+              className="flex items-center gap-2 px-3 py-1 bg-amber-500/30 text-amber-300 rounded-lg hover:bg-amber-500/40 transition-colors text-sm font-medium disabled:opacity-50"
+            >
+              {exitingImpersonation ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Restoring...
+                </>
+              ) : (
+                'Exit Impersonation'
+              )}
+            </button>
+          </div>
+        </div>
+      )}
       <header className="bg-slate-800 border-b border-slate-700">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
@@ -115,6 +155,15 @@ export default function AdminDashboard({ onBackToGuest }: AdminDashboardProps = 
                 <LogOut className="w-4 h-4" />
                 Sign Out
               </button>
+              {isDev && onOpenDevPanel && (
+                <button
+                  onClick={onOpenDevPanel}
+                  className="flex items-center gap-2 px-4 py-2 bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-lg hover:bg-amber-500/30 transition-colors"
+                >
+                  <Wrench className="w-4 h-4" />
+                  Dev Panel
+                </button>
+              )}
             </div>
           </div>
         </div>

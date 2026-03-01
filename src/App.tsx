@@ -8,9 +8,10 @@ import CustomerMenu from './pages/CustomerMenu';
 import RestaurantOwnerLogin from './pages/RestaurantOwnerLogin';
 import RestaurantOnboarding from './pages/RestaurantOnboarding';
 import AdminDashboard from './pages/AdminDashboard';
+import DevPanel from './pages/DevPanel';
 
 type GuestView = 'landing' | 'dietary-setup' | 'menu';
-type RestaurantView = 'login' | 'onboarding' | 'dashboard';
+type RestaurantView = 'login' | 'onboarding' | 'dashboard' | 'dev-panel';
 
 function AppContent() {
   const { user, loading } = useAuth();
@@ -168,6 +169,7 @@ function AppContent() {
         <RestaurantOwnerLogin
           onLoginSuccess={handleRestaurantLoginSuccess}
           onBackToGuest={handleBackToGuestMode}
+          onOpenDevPanel={() => setRestaurantView('dev-panel')}
         />
       );
     }
@@ -181,8 +183,25 @@ function AppContent() {
       );
     }
 
+    if (restaurantView === 'dev-panel') {
+      return (
+        <DevPanel
+          onBack={() => setRestaurantView('dashboard')}
+          onImpersonated={() => {
+            // Real auth happened — reload restaurant data for the new user
+            setRestaurantView('dashboard');
+          }}
+        />
+      );
+    }
+
     if (restaurantView === 'dashboard') {
-      return <AdminDashboard onBackToGuest={handleBackToGuestMode} />;
+      return (
+        <AdminDashboard
+          onBackToGuest={handleBackToGuestMode}
+          onOpenDevPanel={() => setRestaurantView('dev-panel')}
+        />
+      );
     }
   }
 
