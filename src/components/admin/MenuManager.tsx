@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase, Database } from '../../lib/supabase';
 import MenuItemForm from './MenuItemForm';
 import MenuDigitization from '../onboarding/MenuDigitization';
 import DishDetailsInput from '../onboarding/DishDetailsInput';
-import { Plus, Edit2, Trash2, Eye, EyeOff, Camera, ArrowLeft, AlertTriangle } from 'lucide-react';
+import { Plus, Edit2, Trash2, Eye, EyeOff, Camera, ArrowLeft, AlertTriangle, DollarSign, Check, X as XIcon } from 'lucide-react';
 import { ScannedDish } from '../../pages/RestaurantOnboarding';
 
 type MenuItem = Database['public']['Tables']['menu_items']['Row'];
@@ -24,6 +24,10 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [scannedDishes, setScannedDishes] = useState<ScannedDish[]>([]);
+  const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
+  const [editingPriceValue, setEditingPriceValue] = useState('');
+  const [savingPrice, setSavingPrice] = useState(false);
+  const priceInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadMenuItems();
@@ -151,6 +155,37 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
 
   const handleBackFromScan = () => {
     setViewMode('list');
+  };
+
+  const startEditingPrice = (item: MenuItem) => {
+    setEditingPriceId(item.id);
+    setEditingPriceValue(item.price ? Number(item.price).toFixed(2) : '');
+    setTimeout(() => priceInputRef.current?.focus(), 50);
+  };
+
+  const cancelEditingPrice = () => {
+    setEditingPriceId(null);
+    setEditingPriceValue('');
+  };
+
+  const savePrice = async (itemId: string) => {
+    setSavingPrice(true);
+    const newPrice = editingPriceValue.trim() === '' ? null : parseFloat(editingPriceValue);
+    const { error } = await supabase
+      .from('menu_items')
+      .update({ price: newPrice })
+      .eq('id', itemId);
+
+    if (!error) {
+      setMenuItems(prev => prev.map(m =>
+        m.id === itemId ? { ...m, price: newPrice } : m
+      ));
+    } else {
+      alert('Failed to update price. Please try again.');
+    }
+    setSavingPrice(false);
+    setEditingPriceId(null);
+    setEditingPriceValue('');
   };
 
   const categorizedItems = menuItems.reduce((acc, item) => {
@@ -333,11 +368,54 @@ export default function MenuManager({ restaurantId }: MenuManagerProps) {
                           </div>
                         </div>
                       )}
-                      {item.price && (
-                        <p className="text-sm font-medium text-emerald-600 mt-2">
-                          ${Number(item.price).toFixed(2)}
-                        </p>
-                      )}
+                      <div className="flex items-center gap-2 mt-2">
+                        {editingPriceId === item.id ? (
+                          <div className="flex items-center gap-1">
+                            <span className="text-sm text-slate-500">$</span>
+                            <input
+                              ref={priceInputRef}
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={editingPriceValue}
+                              onChange={(e) => setEditingPriceValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') savePrice(item.id);
+                                if (e.key === 'Escape') cancelEditingPrice();
+                              }}
+                              className="w-24 px-2 py-0.5 text-sm border border-emerald-400 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                              placeholder="0.00"
+                            />
+                            <button
+                              onClick={() => savePrice(item.id)}
+                              disabled={savingPrice}
+                              className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
+                              title="Save price"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={cancelEditingPrice}
+                              className="p-1 text-slate-500 hover:bg-slate-100 rounded transition-colors"
+                              title="Cancel"
+                            >
+                              <XIcon className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => startEditingPrice(item)}
+                            className="flex items-center gap-1 group"
+                            title="Click to edit price"
+                          >
+                            <DollarSign className="w-3.5 h-3.5 text-emerald-500" />
+                            <span className="text-sm font-medium text-emerald-600 group-hover:underline">
+                              {item.price ? Number(item.price).toFixed(2) : 'Set price'}
+                            </span>
+                            <Edit2 className="w-3 h-3 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <button
