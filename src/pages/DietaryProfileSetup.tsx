@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase, Database } from '../lib/supabase';
 import { getOrCreateSessionId } from '../lib/customerSession';
-import { Check, Shield, ChevronRight } from 'lucide-react';
+import { Check, ChevronRight } from 'lucide-react';
+import ShieldWithForkKnife from '../components/ShieldWithForkKnife';
 import { getDietaryIcon } from '../components/icons/DietaryIcons';
 
 type DietaryRestriction = Database['public']['Tables']['dietary_restrictions']['Row'];
@@ -90,26 +91,26 @@ export default function DietaryProfileSetup({ onComplete }: DietaryProfileSetupP
     onComplete();
   };
 
+  const guestBg = { background: 'linear-gradient(160deg, #e0f2f1 0%, #e8f4f8 40%, #fce8d8 100%)' } as const;
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">Loading...</div>
+      <div className="min-h-screen flex items-center justify-center" style={guestBg}>
+        <div className="text-slate-500">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+    <div className="min-h-screen" style={guestBg}>
       {/* Header */}
-      <header className="bg-slate-800/50 backdrop-blur-sm border-b border-slate-700 sticky top-0 z-10">
+      <header className="bg-white/80 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl">
-              <Shield className="w-6 h-6 text-white" />
-            </div>
+            <ShieldWithForkKnife size={36} />
             <div>
-              <h1 className="text-xl font-bold text-white">Safe Dining</h1>
-              <p className="text-sm text-slate-400">Dietary Profile Setup</p>
+              <h1 className="text-xl font-bold text-slate-800">Safe Dining</h1>
+              <p className="text-sm text-slate-500">Dietary Profile Setup</p>
             </div>
           </div>
         </div>
@@ -118,9 +119,9 @@ export default function DietaryProfileSetup({ onComplete }: DietaryProfileSetupP
       <main className="max-w-2xl mx-auto px-4 py-8">
         <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
           {/* Card Header */}
-          <div className="bg-gradient-to-r from-emerald-500 to-teal-600 px-6 py-5">
+          <div className="px-6 py-5" style={{ background: 'linear-gradient(90deg, #3b82f6, #0d9488)' }}>
             <h2 className="text-2xl font-bold text-white">Your Dietary Profile</h2>
-            <p className="text-emerald-100 mt-1">
+            <p className="text-blue-100 mt-1">
               Select your dietary requirements for personalized menu recommendations
             </p>
           </div>
@@ -238,7 +239,7 @@ export default function DietaryProfileSetup({ onComplete }: DietaryProfileSetupP
                 type="text"
                 value={customAllergens}
                 onChange={(e) => setCustomAllergens(e.target.value)}
-                className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-colors"
+                className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                 placeholder="e.g., cilantro, mushrooms, bell peppers"
               />
               <p className="text-xs text-slate-400 mt-2">Separate multiple items with commas</p>
@@ -274,7 +275,8 @@ export default function DietaryProfileSetup({ onComplete }: DietaryProfileSetupP
               <button
                 type="submit"
                 disabled={saving}
-                className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-4 rounded-xl font-semibold hover:from-emerald-600 hover:to-teal-700 transition-all shadow-lg hover:shadow-xl disabled:opacity-50"
+                className="flex-1 flex items-center justify-center gap-2 text-white py-4 rounded-xl font-semibold transition-all shadow-lg hover:shadow-xl disabled:opacity-50"
+                style={{ background: 'linear-gradient(90deg, #3b82f6, #0d9488)' }}
               >
                 {saving ? 'Saving...' : 'Continue to Menu'}
                 {!saving && <ChevronRight className="w-5 h-5" />}
