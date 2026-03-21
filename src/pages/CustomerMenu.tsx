@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase, Database } from '../lib/supabase';
 import { getOrCreateSessionId } from '../lib/customerSession';
-import { Settings, Shield, ChevronRight, AlertCircle, CheckCircle, XCircle, LogOut } from 'lucide-react';
+import { Settings, ChevronRight, AlertCircle, CheckCircle, XCircle, LogOut } from 'lucide-react';
+import ShieldWithForkKnife from '../components/ShieldWithForkKnife';
 import BottomSheet from '../components/common/BottomSheet';
 import DishDetail from '../components/customer/DishDetail';
 import { analyzeDishSafety } from '../lib/safetyAnalysis';
@@ -179,17 +180,19 @@ export default function CustomerMenu({ qrCode, onEditProfile, onExit }: Customer
     }
   };
 
+  const guestBg = { background: 'linear-gradient(160deg, #e0f2f1 0%, #e8f4f8 40%, #fce8d8 100%)' } as const;
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">Loading menu...</div>
+      <div className="min-h-screen flex items-center justify-center" style={guestBg}>
+        <div className="text-slate-500">Loading menu...</div>
       </div>
     );
   }
 
   if (!restaurant) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+      <div className="min-h-screen flex items-center justify-center p-4" style={guestBg}>
         <div className="bg-white rounded-2xl p-8 text-center shadow-2xl">
           <p className="text-slate-600">Restaurant not found</p>
         </div>
@@ -203,26 +206,24 @@ export default function CustomerMenu({ qrCode, onEditProfile, onExit }: Customer
     : menuItems.filter((item) => item.category === filterCategory);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+    <div className="min-h-screen" style={guestBg}>
       {/* Header */}
-      <header className="bg-slate-800/50 backdrop-blur-sm border-b border-slate-700 sticky top-0 z-10">
+      <header className="bg-white/80 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl">
-                <Shield className="w-6 h-6 text-white" />
-              </div>
+              <ShieldWithForkKnife size={36} />
               <div>
-                <h1 className="text-xl font-bold text-white">{restaurant.name}</h1>
+                <h1 className="text-xl font-bold text-slate-800">{restaurant.name}</h1>
                 {restaurant.description && (
-                  <p className="text-sm text-slate-400">{restaurant.description}</p>
+                  <p className="text-sm text-slate-500">{restaurant.description}</p>
                 )}
               </div>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={onEditProfile}
-                className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
                 title="Dietary Settings"
               >
                 <Settings className="w-4 h-4" />
@@ -231,7 +232,7 @@ export default function CustomerMenu({ qrCode, onEditProfile, onExit }: Customer
               {onExit && (
                 <button
                   onClick={onExit}
-                  className="flex items-center gap-2 px-4 py-2 bg-red-600/80 text-white rounded-lg hover:bg-red-600 transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
                   title="Exit Menu"
                 >
                   <LogOut className="w-4 h-4" />
@@ -248,19 +249,17 @@ export default function CustomerMenu({ qrCode, onEditProfile, onExit }: Customer
         {/* Allergen Alert Banner */}
           {customerAllergens.length > 0 && (
             <div className="max-w-4xl mx-auto px-4 pt-4">
-              <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+              <div className="bg-white border border-slate-200 rounded-xl p-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-emerald-500/20 rounded-lg">
-                    <Shield className="w-5 h-5 text-emerald-400" />
-                  </div>
+                  <ShieldWithForkKnife size={28} />
                   <div className="flex-1">
-                    <p className="text-sm text-slate-300">
-                      Filtering for: <span className="font-medium text-white">{customerAllergens.join(', ')}</span>
+                    <p className="text-sm text-slate-600">
+                      Filtering for: <span className="font-medium text-slate-800">{customerAllergens.join(', ')}</span>
                     </p>
                   </div>
                   <button
                     onClick={onEditProfile}
-                    className="text-emerald-400 text-sm font-medium hover:text-emerald-300"
+                    className="text-teal-600 text-sm font-medium hover:text-teal-700"
                   >
                     Edit
                   </button>
@@ -271,7 +270,7 @@ export default function CustomerMenu({ qrCode, onEditProfile, onExit }: Customer
 
           {/* Category Filter */}
           {categories.length > 2 && (
-            <div className="bg-slate-800/30 border-b border-slate-700/50">
+            <div className="bg-white/60 border-b border-slate-200">
               <div className="max-w-4xl mx-auto px-4 py-3">
                 <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
                   {categories.map((category) => (
@@ -280,8 +279,8 @@ export default function CustomerMenu({ qrCode, onEditProfile, onExit }: Customer
                       onClick={() => setFilterCategory(category ?? 'all')}
                       className={`px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap transition-all ${
                         filterCategory === category
-                          ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg'
-                          : 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'
+                          ? 'bg-gradient-to-r from-blue-500 to-teal-500 text-white shadow-lg'
+                          : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
                       }`}
                     >
                       {category === 'all' ? 'All Items' : category}
@@ -308,8 +307,8 @@ export default function CustomerMenu({ qrCode, onEditProfile, onExit }: Customer
                     return acc;
                   }, {} as Record<string, typeof filteredItems>)
                 ).map(([category, items]) => (
-                  <div key={category} className="bg-white rounded-2xl shadow-xl overflow-hidden">
-                    <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-5 py-3">
+                  <div key={category} className="bg-white rounded-2xl shadow-md overflow-hidden">
+                    <div className="bg-gradient-to-r from-blue-500 to-teal-500 px-5 py-3">
                       <h2 className="font-bold text-white uppercase text-sm tracking-wide">{category}</h2>
                     </div>
                     <div className="divide-y divide-slate-100">
