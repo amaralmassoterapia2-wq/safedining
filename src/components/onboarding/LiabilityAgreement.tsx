@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Shield, AlertTriangle, Check } from 'lucide-react';
+import { AlertTriangle, Check } from 'lucide-react';
+import ShieldWithForkKnife from '../ShieldWithForkKnife';
 
 interface LiabilityAgreementProps {
   restaurantId: string;
@@ -50,12 +51,10 @@ export default function LiabilityAgreement({ restaurantId, onAccept }: Liability
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(160deg, #e0f2f1 0%, #e8f4f8 40%, #fce8d8 100%)' }}>
       <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-3xl">
         <div className="flex items-center justify-center mb-6">
-          <div className="bg-slate-900 p-4 rounded-2xl">
-            <Shield className="w-10 h-10 text-white" />
-          </div>
+          <ShieldWithForkKnife size={64} />
         </div>
 
         <h1 className="text-3xl font-bold text-center text-slate-900 mb-2">
@@ -168,7 +167,8 @@ export default function LiabilityAgreement({ restaurantId, onAccept }: Liability
         <button
           onClick={handleContinue}
           disabled={!agreed || loading}
-          className="w-full bg-slate-900 text-white py-4 rounded-xl font-semibold hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full text-white py-4 rounded-xl font-semibold transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ background: 'linear-gradient(90deg, #3b82f6, #0d9488)' }}
         >
           {loading ? 'Saving...' : 'Accept Terms and Continue'}
         </button>
