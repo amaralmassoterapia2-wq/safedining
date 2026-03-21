@@ -42,6 +42,24 @@ interface CookingStepInput {
   modification_notes: string;
 }
 
+interface ConflictOption {
+  label: string;
+  action: 'mark_removable' | 'mark_substitutable' | 'add_modifiable_allergens' | 'mark_step_modifiable' | 'keep_as_is';
+}
+
+interface ConflictItem {
+  id: string;
+  type: 'select_modifiable_allergens' | 'generic';
+  description: string;
+  options: ConflictOption[];
+  selectedOption: number | null;
+  availableAllergens?: string[];
+  selectedAllergens?: Set<string>;
+  stepIndex?: number;
+  ingredientIndex?: number;
+  allergen?: string;
+}
+
 export default function MenuItemForm({
   restaurantId,
   editingItem,
@@ -103,6 +121,10 @@ export default function MenuItemForm({
   // Calorie estimation state
   const [estimatingCalories, setEstimatingCalories] = useState(false);
   const calorieDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Conflict resolution modal state
+  const [conflicts, setConflicts] = useState<ConflictItem[]>([]);
+  const [showConflictModal, setShowConflictModal] = useState(false);
 
   // Load existing ingredients on mount
   useEffect(() => {
@@ -549,15 +571,25 @@ export default function MenuItemForm({
 
     setDetectingCrossContact(index);
     try {
-      const detectedRisks = await detectCrossContactRisks(description);
-      if (detectedRisks.length > 0) {
-        // Merge with existing risks, avoiding duplicates
+      const analysis = await detectCrossContactRisks(description);
+      if (analysis.cross_contact_risks.length > 0 || analysis.modifiable_allergens.length > 0) {
+        // Merge with existing data, avoiding duplicates
         setCookingSteps((prev) => {
           const step = prev[index];
           if (!step) return prev;
-          const currentRisks = step.cross_contact_risk;
-          const newRisks = [...new Set([...currentRisks, ...detectedRisks])];
-          return prev.map((s, i) => (i === index ? { ...s, cross_contact_risk: newRisks } : s));
+          const newRisks = [...new Set([...step.cross_contact_risk, ...analysis.cross_contact_risks])];
+          const newModifiable = [...new Set([...(step.modifiable_allergens || []), ...analysis.modifiable_allergens])];
+          const newNotes = analysis.modification_notes
+            ? (step.modification_notes ? step.modification_notes + '; ' + analysis.modification_notes : analysis.modification_notes)
+            : step.modification_notes;
+          const isModifiable = step.is_modifiable || newModifiable.length > 0;
+          return prev.map((s, i) => (i === index ? {
+            ...s,
+            cross_contact_risk: newRisks,
+            modifiable_allergens: newModifiable,
+            modification_notes: newNotes,
+            is_modifiable: isModifiable,
+          } : s));
         });
       }
     } catch (err) {
@@ -615,21 +647,193 @@ export default function MenuItemForm({
     setDescriptionAllergens(prev => prev.filter(a => a !== allergen));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Detect conflicts between cooking steps and ingredients
+  const detectConflicts = (): ConflictItem[] => {
+    const found: ConflictItem[] = [];
+    let conflictId = 0;
+
+    for (let si = 0; si < cookingSteps.length; si++) {
+      const step = cookingSteps[si];
+
+      // Type 1: is_modifiable=true but modifiable_allergens is empty
+      if (step.is_modifiable && step.cross_contact_risk.length > 0 && step.modifiable_allergens.length === 0) {
+        found.push({
+          id: `conflict-${conflictId++}`,
+          type: 'select_modifiable_allergens',
+          description: `Step ${step.step_number} ("${step.description.slice(0, 60)}...") is marked as modifiable, but no specific allergens are listed as avoidable. Select which allergens can be avoided:`,
+          options: [],
+          selectedOption: null,
+          availableAllergens: [...step.cross_contact_risk],
+          selectedAllergens: new Set(step.cross_contact_risk),
+          stepIndex: si,
+        });
+      }
+
+      // Type 2: Step text mentions modifications but is_modifiable is false
+      if (!step.is_modifiable && step.description.trim()) {
+        const modKeywords = /can be (changed|removed|substituted|replaced|swapped)|optional|garnish.*(remov|optional)|gluten.free (option|alternative|bread|version)|substitute available|alternative available/i;
+        if (modKeywords.test(step.description)) {
+          found.push({
+            id: `conflict-${conflictId++}`,
+            type: 'generic',
+            description: `Step ${step.step_number} mentions possible modifications ("${step.description.slice(0, 60)}...") but is not marked as modifiable. Should it be?`,
+            options: [
+              { label: 'Yes, mark this step as modifiable', action: 'mark_step_modifiable' },
+              { label: 'No, keep as-is', action: 'keep_as_is' },
+            ],
+            selectedOption: null,
+            stepIndex: si,
+          });
+        }
+      }
+
+      // Type 3: Cooking step says allergen is modifiable but ingredient is not removable/substitutable
+      for (const allergen of step.modifiable_allergens) {
+        const allergenLower = allergen.toLowerCase();
+        for (let ii = 0; ii < ingredients.length; ii++) {
+          const ing = ingredients[ii];
+          const ingAllergens = ing.allergens.map(a => a.toLowerCase());
+          if (ingAllergens.includes(allergenLower) && !ing.isRemovable && !ing.isSubstitutable) {
+            found.push({
+              id: `conflict-${conflictId++}`,
+              type: 'generic',
+              description: `Cooking step says "${allergen}" can be avoided, but ingredient "${ing.name}" (contains ${allergen}) is not marked as removable or substitutable. How should this be handled?`,
+              options: [
+                { label: `Mark "${ing.name}" as removable`, action: 'mark_removable' },
+                { label: `Mark "${ing.name}" as substitutable`, action: 'mark_substitutable' },
+                { label: 'Keep as-is', action: 'keep_as_is' },
+              ],
+              selectedOption: null,
+              stepIndex: si,
+              ingredientIndex: ii,
+              allergen,
+            });
+          }
+        }
+      }
+
+      // Type 4: Ingredient is removable but cooking step has that allergen as non-modifiable cross-contact
+      for (let ii = 0; ii < ingredients.length; ii++) {
+        const ing = ingredients[ii];
+        if (!ing.isRemovable && !ing.isSubstitutable) continue;
+        for (const ingAllergen of ing.allergens) {
+          const ingAllergenLower = ingAllergen.toLowerCase();
+          const inCrossContact = step.cross_contact_risk.some(r => r.toLowerCase() === ingAllergenLower);
+          const inModifiable = step.modifiable_allergens.some(m => m.toLowerCase() === ingAllergenLower);
+          if (inCrossContact && !inModifiable && !step.is_modifiable) {
+            found.push({
+              id: `conflict-${conflictId++}`,
+              type: 'generic',
+              description: `Ingredient "${ing.name}" is marked as ${ing.isRemovable ? 'removable' : 'substitutable'}, but Step ${step.step_number} lists "${ingAllergen}" as a non-modifiable cross-contact risk.`,
+              options: [
+                { label: `Mark Step ${step.step_number} as modifiable for "${ingAllergen}"`, action: 'mark_step_modifiable' },
+                { label: 'Keep as-is (cross-contact risk remains)', action: 'keep_as_is' },
+              ],
+              selectedOption: null,
+              stepIndex: si,
+              ingredientIndex: ii,
+              allergen: ingAllergen,
+            });
+          }
+        }
+      }
+    }
+
+    return found;
+  };
+
+  // Apply conflict resolutions to state
+  const applyConflictResolutions = (resolvedConflicts: ConflictItem[]) => {
+    for (const conflict of resolvedConflicts) {
+      // Handle multi-select allergen conflicts
+      if (conflict.type === 'select_modifiable_allergens') {
+        if (conflict.stepIndex !== undefined && conflict.selectedAllergens && conflict.selectedAllergens.size > 0) {
+          setCookingSteps(prev => prev.map((step, i) =>
+            i === conflict.stepIndex ? {
+              ...step,
+              modifiable_allergens: [...new Set([...step.modifiable_allergens, ...conflict.selectedAllergens!])],
+            } : step
+          ));
+        }
+        continue;
+      }
+
+      if (conflict.selectedOption === null) continue;
+      const action = conflict.options[conflict.selectedOption].action;
+
+      switch (action) {
+        case 'mark_removable':
+          if (conflict.ingredientIndex !== undefined) {
+            setIngredients(prev => prev.map((ing, i) =>
+              i === conflict.ingredientIndex ? { ...ing, isRemovable: true } : ing
+            ));
+          }
+          break;
+        case 'mark_substitutable':
+          if (conflict.ingredientIndex !== undefined) {
+            setIngredients(prev => prev.map((ing, i) =>
+              i === conflict.ingredientIndex ? { ...ing, isSubstitutable: true } : ing
+            ));
+          }
+          break;
+        case 'add_modifiable_allergens':
+          if (conflict.stepIndex !== undefined) {
+            setCookingSteps(prev => prev.map((step, i) =>
+              i === conflict.stepIndex ? {
+                ...step,
+                modifiable_allergens: [...new Set([...step.modifiable_allergens, ...step.cross_contact_risk])],
+              } : step
+            ));
+          }
+          break;
+        case 'mark_step_modifiable':
+          if (conflict.stepIndex !== undefined) {
+            setCookingSteps(prev => prev.map((step, i) => {
+              if (i !== conflict.stepIndex) return step;
+              const newModifiable = conflict.allergen
+                ? [...new Set([...step.modifiable_allergens, conflict.allergen])]
+                : step.cross_contact_risk.length > 0
+                  ? [...new Set([...step.modifiable_allergens, ...step.cross_contact_risk])]
+                  : step.modifiable_allergens;
+              return { ...step, is_modifiable: true, modifiable_allergens: newModifiable };
+            }));
+          }
+          break;
+        case 'keep_as_is':
+          break;
+      }
+    }
+  };
+
+  const handleSubmit = async (e?: React.FormEvent, overrides?: { resolvedIngredients?: IngredientInput[], resolvedSteps?: CookingStepInput[] }) => {
+    if (e) e.preventDefault();
+
+    const effectiveIngredients = overrides?.resolvedIngredients || ingredients;
+    const effectiveSteps = overrides?.resolvedSteps || cookingSteps;
+
+    // Validate ingredients have amounts
+    const invalidIngredients = effectiveIngredients.filter(
+      (ing) => ing.amountValue === null || ing.amountValue <= 0
+    );
+    if (invalidIngredients.length > 0) {
+      setError(`Please enter amounts for: ${invalidIngredients.map((i) => i.name).join(', ')}`);
+      return;
+    }
+
+    // Only detect conflicts if no overrides (i.e., not a post-resolution save)
+    if (!overrides) {
+      const detectedConflicts = detectConflicts();
+      if (detectedConflicts.length > 0) {
+        setConflicts(detectedConflicts);
+        setShowConflictModal(true);
+        return;
+      }
+    }
+
     setLoading(true);
     setError(null);
 
     try {
-      // Validate ingredients have amounts
-      const invalidIngredients = ingredients.filter(
-        (ing) => ing.amountValue === null || ing.amountValue <= 0
-      );
-      if (invalidIngredients.length > 0) {
-        setError(`Please enter amounts for: ${invalidIngredients.map((i) => i.name).join(', ')}`);
-        setLoading(false);
-        return;
-      }
 
       const menuItemData = {
         restaurant_id: restaurantId,
@@ -681,7 +885,7 @@ export default function MenuItemForm({
       }
 
       // Save ingredients
-      for (const ing of ingredients) {
+      for (const ing of effectiveIngredients) {
         if (!ing.name.trim()) continue;
 
         let ingredientId = ing.ingredientId;
@@ -783,8 +987,8 @@ export default function MenuItemForm({
       }
 
       // Save cooking steps
-      if (cookingSteps.length > 0) {
-        const stepsToInsert = cookingSteps
+      if (effectiveSteps.length > 0) {
+        const stepsToInsert = effectiveSteps
           .filter((step) => step.description.trim())
           .map((step) => ({
             menu_item_id: menuItemId,
@@ -814,7 +1018,61 @@ export default function MenuItemForm({
     }
   };
 
+  const handleConflictResolutionSave = () => {
+    // Compute resolved data directly instead of relying on state updates
+    let resolvedIngredients = [...ingredients.map(ing => ({ ...ing }))];
+    let resolvedSteps = [...cookingSteps.map(step => ({ ...step }))];
+
+    for (const conflict of conflicts) {
+      if (conflict.type === 'select_modifiable_allergens') {
+        if (conflict.stepIndex !== undefined && conflict.selectedAllergens && conflict.selectedAllergens.size > 0) {
+          const step = resolvedSteps[conflict.stepIndex];
+          resolvedSteps[conflict.stepIndex] = {
+            ...step,
+            modifiable_allergens: [...new Set([...step.modifiable_allergens, ...conflict.selectedAllergens])],
+          };
+        }
+        continue;
+      }
+      if (conflict.selectedOption === null) continue;
+      const action = conflict.options[conflict.selectedOption].action;
+      switch (action) {
+        case 'mark_removable':
+          if (conflict.ingredientIndex !== undefined) {
+            resolvedIngredients[conflict.ingredientIndex] = { ...resolvedIngredients[conflict.ingredientIndex], isRemovable: true };
+          }
+          break;
+        case 'mark_substitutable':
+          if (conflict.ingredientIndex !== undefined) {
+            resolvedIngredients[conflict.ingredientIndex] = { ...resolvedIngredients[conflict.ingredientIndex], isSubstitutable: true };
+          }
+          break;
+        case 'mark_step_modifiable':
+          if (conflict.stepIndex !== undefined) {
+            const step = resolvedSteps[conflict.stepIndex];
+            const newModifiable = conflict.allergen
+              ? [...new Set([...step.modifiable_allergens, conflict.allergen])]
+              : step.cross_contact_risk.length > 0
+                ? [...new Set([...step.modifiable_allergens, ...step.cross_contact_risk])]
+                : step.modifiable_allergens;
+            resolvedSteps[conflict.stepIndex] = { ...step, is_modifiable: true, modifiable_allergens: newModifiable };
+          }
+          break;
+      }
+    }
+
+    // Also update state for UI consistency
+    setIngredients(resolvedIngredients);
+    setCookingSteps(resolvedSteps);
+    setShowConflictModal(false);
+    setConflicts([]);
+
+    // Pass resolved data directly to avoid stale state
+    handleSubmit(undefined, { resolvedIngredients, resolvedSteps });
+  };
+
   return (
+    <>
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <button
@@ -1690,5 +1948,132 @@ export default function MenuItemForm({
         </div>
       </form>
     </div>
+
+    {/* Conflict Resolution Modal */}
+    {showConflictModal && (
+      <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-xl shadow-lg max-w-md w-full max-h-[80vh] overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+            <h3 className="text-sm font-semibold text-slate-900">Review before saving</h3>
+            <button
+              onClick={() => { setShowConflictModal(false); setConflicts([]); }}
+              className="p-1 hover:bg-slate-100 rounded transition-colors"
+            >
+              <X className="w-4 h-4 text-slate-400" />
+            </button>
+          </div>
+
+          <div className="overflow-y-auto px-5 py-4 space-y-3">
+            {conflicts.map((conflict, ci) => (
+              <div key={conflict.id} className="space-y-2.5">
+                <p className="text-xs text-slate-600 leading-relaxed">{conflict.description}</p>
+
+                {conflict.type === 'select_modifiable_allergens' && conflict.availableAllergens ? (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1.5">
+                      {conflict.availableAllergens.map((allergen) => {
+                        const isSelected = conflict.selectedAllergens?.has(allergen) ?? false;
+                        return (
+                          <button
+                            key={allergen}
+                            type="button"
+                            onClick={() => {
+                              setConflicts(prev => prev.map((c, i) => {
+                                if (i !== ci) return c;
+                                const newSet = new Set(c.selectedAllergens);
+                                if (newSet.has(allergen)) newSet.delete(allergen);
+                                else newSet.add(allergen);
+                                return { ...c, selectedAllergens: newSet };
+                              }));
+                            }}
+                            className={`px-2.5 py-1 text-xs font-medium rounded-full transition-colors ${
+                              isSelected
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                            }`}
+                          >
+                            {allergen}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConflicts(prev => prev.map((c, i) =>
+                            i === ci ? { ...c, selectedAllergens: new Set(c.availableAllergens) } : c
+                          ));
+                        }}
+                        className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConflicts(prev => prev.map((c, i) =>
+                            i === ci ? { ...c, selectedAllergens: new Set<string>() } : c
+                          ));
+                        }}
+                        className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+                      >
+                        None
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {conflict.options.map((option, oi) => (
+                      <button
+                        key={oi}
+                        type="button"
+                        onClick={() => {
+                          setConflicts(prev => prev.map((c, i) =>
+                            i === ci ? { ...c, selectedOption: oi } : c
+                          ));
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${
+                          conflict.selectedOption === oi
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-slate-50 text-slate-600 border border-transparent hover:border-slate-200'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {ci < conflicts.length - 1 && <div className="border-t border-slate-100" />}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2 px-5 py-3 border-t border-slate-200">
+            <button
+              type="button"
+              onClick={() => { setShowConflictModal(false); setConflicts([]); }}
+              className="flex-1 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConflictResolutionSave}
+              disabled={conflicts.some(c =>
+                c.type === 'select_modifiable_allergens'
+                  ? (!c.selectedAllergens || c.selectedAllergens.size === 0)
+                  : c.selectedOption === null
+              )}
+              className="flex-1 px-3 py-2 text-sm bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

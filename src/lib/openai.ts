@@ -2,6 +2,19 @@ import { ScannedDish } from '../pages/RestaurantOnboarding';
 
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
 
+// Return type for enhanced cross-contact risk detection
+export interface CrossContactAnalysis {
+  cross_contact_risks: string[];
+  modifiable_allergens: string[];
+  modification_notes: string;
+}
+
+const EMPTY_CROSS_CONTACT_ANALYSIS: CrossContactAnalysis = {
+  cross_contact_risks: [],
+  modifiable_allergens: [],
+  modification_notes: '',
+};
+
 // Common allergens list for reference (FDA Big 9 + EU allergens)
 export const COMMON_ALLERGENS = [
   'Milk',
@@ -760,12 +773,13 @@ Identify any cross-contamination risks from the preparation method.`,
 }
 
 /**
- * Detect cross-contact allergen risks from a cooking step description
- * Returns an array of allergen categories that might be cross-contamination risks
+ * Detect cross-contact allergen risks from a cooking step description.
+ * Also detects which allergens are modifiable and how, based on the chef's wording.
+ * Returns a CrossContactAnalysis object with risks, modifiable allergens, and modification notes.
  */
-export async function detectCrossContactRisks(stepDescription: string): Promise<string[]> {
+export async function detectCrossContactRisks(stepDescription: string): Promise<CrossContactAnalysis> {
   if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here' || !stepDescription.trim()) {
-    return [];
+    return EMPTY_CROSS_CONTACT_ANALYSIS;
   }
 
   try {
@@ -780,62 +794,89 @@ export async function detectCrossContactRisks(stepDescription: string): Promise<
         messages: [
           {
             role: 'system',
-            content: `You are a food safety expert. Analyze cooking step descriptions for potential cross-contamination risks.
+            content: `You are a food safety expert. Analyze cooking step descriptions for:
+1. Cross-contamination risks (shared equipment, oils, surfaces, utensils)
+2. Which allergens can be AVOIDED or MODIFIED based on what the chef describes
 
 VALID ALLERGEN CATEGORIES (only use these exact names):
 ${ALLERGEN_CATEGORIES}
 
 ${ALLERGEN_MAPPING_REFERENCE}
 
-Your task:
-- Identify any cross-contamination risks mentioned or implied in the cooking step
+Your tasks:
+- Identify cross-contamination risks mentioned or implied in the cooking step
 - Look for: shared equipment (fryers, grills, pans), cooking oils, shared surfaces, utensils
-- Look for mentions of allergen-containing foods being prepared nearby or with shared equipment
-- Examples:
-  - "fried in the same oil as shrimp" -> ["Shellfish"]
-  - "grilled on shared surface with fish" -> ["Fish"]
-  - "cooked in butter" -> ["Milk"] (if it's cross-contact, not an ingredient)
-  - "uses same cutting board as nuts" -> ["Tree Nuts"]
-  - "prepared in kitchen that handles peanuts" -> ["Peanuts"]
+- Also identify which allergens the chef indicates CAN BE MODIFIED or AVOIDED. Look for language like:
+  - "can be changed to gluten free" → that allergen is modifiable
+  - "can be removed" → that allergen is modifiable
+  - "is a garnish" or "optional" → that allergen is modifiable
+  - "substitute available" or "alternative available" → that allergen is modifiable
+  - "use separate fryer/pan" → that allergen is modifiable
+- Summarize HOW the modification works based on the chef's words
 
-Return ONLY a JSON array of allergen category names that are cross-contamination risks.
-If no risks detected, return empty array [].
-Do NOT include allergens that are actual ingredients - only cross-contamination from shared equipment/environment.`,
+Return ONLY a JSON object with this exact structure:
+{
+  "cross_contact_risks": ["Allergen1", "Allergen2"],
+  "modifiable_allergens": ["Allergen1"],
+  "modification_notes": "Brief description of how to modify based on chef's words"
+}
+
+Rules:
+- "cross_contact_risks" = ALL allergens present (from cross-contact OR mentioned allergen-containing ingredients in the step)
+- "modifiable_allergens" = subset of cross_contact_risks that the chef says CAN be avoided/changed/removed
+- "modification_notes" = empty string if no modifications described
+- If no risks at all, return: {"cross_contact_risks":[],"modifiable_allergens":[],"modification_notes":""}
+
+Examples:
+- "fried in same oil as shrimp" → {"cross_contact_risks":["Shellfish"],"modifiable_allergens":[],"modification_notes":""}
+- "bread can be changed for gluten free and almond is a garnish that can be removed" → {"cross_contact_risks":["Gluten","Wheat","Tree Nuts"],"modifiable_allergens":["Gluten","Wheat","Tree Nuts"],"modification_notes":"Bread can be substituted with gluten-free option; almonds can be removed as they are a garnish"}
+- "grilled on shared surface, can use separate pan on request" → {"cross_contact_risks":["Fish"],"modifiable_allergens":["Fish"],"modification_notes":"Can use separate pan on request"}`,
           },
           {
             role: 'user',
             content: `Cooking step: "${stepDescription}"
 
-What cross-contamination allergen risks are present? Return only the JSON array.`,
+Analyze for cross-contamination risks and modification possibilities. Return only the JSON object.`,
           },
         ],
-        max_tokens: 200,
+        max_tokens: 300,
         temperature: 0.1,
       }),
     });
 
     if (!response.ok) {
       console.error('Failed to detect cross-contact risks:', response.status);
-      return [];
+      return EMPTY_CROSS_CONTACT_ANALYSIS;
     }
 
     const data = await response.json();
-    const content: string = data.choices[0]?.message?.content || '[]';
+    let content: string = data.choices[0]?.message?.content || '{}';
 
-    // Parse JSON array
-    const jsonMatch = content.match(/\[[\s\S]*?\]/);
-    if (jsonMatch) {
-      const allergens: string[] = JSON.parse(jsonMatch[0]);
-      if (Array.isArray(allergens)) {
-        return allergens
-          .filter((a): a is string => typeof a === 'string')
-          .filter(isValidAllergen);
-      }
+    // Strip markdown code blocks if present
+    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      content = codeBlockMatch[1].trim();
     }
-    return [];
+
+    // Parse JSON object
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        cross_contact_risks: (parsed.cross_contact_risks || [])
+          .filter((a: unknown): a is string => typeof a === 'string')
+          .filter(isValidAllergen),
+        modifiable_allergens: (parsed.modifiable_allergens || [])
+          .filter((a: unknown): a is string => typeof a === 'string')
+          .filter(isValidAllergen),
+        modification_notes: typeof parsed.modification_notes === 'string'
+          ? parsed.modification_notes : '',
+      };
+    }
+    return EMPTY_CROSS_CONTACT_ANALYSIS;
   } catch (error) {
     console.error('Error detecting cross-contact risks:', error);
-    return [];
+    return EMPTY_CROSS_CONTACT_ANALYSIS;
   }
 }
 

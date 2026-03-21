@@ -104,6 +104,25 @@ interface DishForm {
   nutrition: NutritionFields;
 }
 
+interface ConflictOption {
+  label: string;
+  action: 'mark_removable' | 'mark_substitutable' | 'add_modifiable_allergens' | 'mark_step_modifiable' | 'keep_as_is';
+}
+
+interface ConflictItem {
+  id: string;
+  type: 'select_modifiable_allergens' | 'generic';
+  description: string;
+  options: ConflictOption[];
+  selectedOption: number | null;
+  // For multi-select allergen conflicts
+  availableAllergens?: string[];
+  selectedAllergens?: Set<string>;
+  stepIndex?: number;
+  ingredientIndex?: number;
+  allergen?: string;
+}
+
 export default function DishDetailsInput({ restaurantId, dishes, onComplete }: DishDetailsInputProps) {
   const [currentDishIndex, setCurrentDishIndex] = useState<number | null>(null);
   const [dishForms, setDishForms] = useState<Record<string, DishForm>>({});
@@ -133,6 +152,10 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
   // Cooking steps state
   const [detectingCrossContact, setDetectingCrossContact] = useState<number | null>(null);
   const crossContactDebounceRef = useRef<{ [key: number]: NodeJS.Timeout }>({});
+
+  // Conflict resolution modal state
+  const [conflicts, setConflicts] = useState<ConflictItem[]>([]);
+  const [showConflictModal, setShowConflictModal] = useState(false);
 
   // Calorie estimation state
   const [estimatingCalories, setEstimatingCalories] = useState(false);
@@ -360,6 +383,31 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             })
           );
 
+          // Fetch cooking steps for this menu item
+          const { data: cookingStepsData } = await supabase
+            .from('cooking_steps')
+            .select('*')
+            .eq('menu_item_id', item.id)
+            .order('step_number');
+
+          const loadedCookingSteps: CookingStepInput[] = (cookingStepsData || []).map((cs: {
+            id: string;
+            step_number: number;
+            description: string;
+            cross_contact_risk: string[];
+            is_modifiable: boolean;
+            modifiable_allergens: string[];
+            modification_notes: string | null;
+          }) => ({
+            id: cs.id,
+            step_number: cs.step_number,
+            description: cs.description,
+            cross_contact_risk: cs.cross_contact_risk || [],
+            is_modifiable: cs.is_modifiable || false,
+            modifiable_allergens: cs.modifiable_allergens || [],
+            modification_notes: cs.modification_notes || '',
+          }));
+
           existingData[matchingDish.id] = {
             menuItemId: item.id,
             preparation: item.preparation || '',
@@ -372,7 +420,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
           if (ingredients.length > 0) {
             completedIds.add(matchingDish.id);
 
-            // Pre-populate the form with existing data
+            // Pre-populate the form with existing data including cooking steps
             setDishForms(prev => ({
               ...prev,
               [matchingDish.id]: {
@@ -382,6 +430,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                 preparation: item.preparation || '',
                 photoFile: null,
                 photoUrl: item.photo_url || '',
+                cookingSteps: loadedCookingSteps,
               },
             }));
           }
@@ -923,20 +972,30 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
 
     setDetectingCrossContact(index);
     try {
-      const detectedRisks = await detectCrossContactRisks(description);
-      if (detectedRisks.length > 0) {
-        // Merge with existing risks, avoiding duplicates
+      const analysis = await detectCrossContactRisks(description);
+      if (analysis.cross_contact_risks.length > 0 || analysis.modifiable_allergens.length > 0) {
+        // Merge with existing data, avoiding duplicates
         setDishForms((prev) => {
           const step = prev[currentDish.id]?.cookingSteps?.[index];
           if (!step) return prev;
-          const existingRisks = step.cross_contact_risk || [];
-          const newRisks = [...new Set([...existingRisks, ...detectedRisks])];
+          const newRisks = [...new Set([...(step.cross_contact_risk || []), ...analysis.cross_contact_risks])];
+          const newModifiable = [...new Set([...(step.modifiable_allergens || []), ...analysis.modifiable_allergens])];
+          const newNotes = analysis.modification_notes
+            ? (step.modification_notes ? step.modification_notes + '; ' + analysis.modification_notes : analysis.modification_notes)
+            : step.modification_notes;
+          const isModifiable = step.is_modifiable || newModifiable.length > 0;
           return {
             ...prev,
             [currentDish.id]: {
               ...prev[currentDish.id],
               cookingSteps: prev[currentDish.id].cookingSteps.map((s, i) =>
-                i === index ? { ...s, cross_contact_risk: newRisks } : s
+                i === index ? {
+                  ...s,
+                  cross_contact_risk: newRisks,
+                  modifiable_allergens: newModifiable,
+                  modification_notes: newNotes,
+                  is_modifiable: isModifiable,
+                } : s
               ),
             },
           };
@@ -961,34 +1020,181 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     updateCookingStep(stepIndex, 'cross_contact_risk', step.cross_contact_risk.filter(r => r !== allergen));
   };
 
-  const handleSaveDish = async () => {
-    if (!currentDish || !currentForm) return;
+  // Detect conflicts between cooking steps and ingredients before saving
+  const detectConflicts = (form: DishForm): ConflictItem[] => {
+    const found: ConflictItem[] = [];
+    let conflictId = 0;
 
-    // Validate that all ingredients have amounts
-    const ingredientsWithoutAmount = currentForm.ingredients.filter(
-      ing => ing.amountValue === null || ing.amountValue === undefined || ing.amountValue <= 0
-    );
+    for (let si = 0; si < form.cookingSteps.length; si++) {
+      const step = form.cookingSteps[si];
 
-    if (ingredientsWithoutAmount.length > 0) {
-      const names = ingredientsWithoutAmount.map(ing => ing.name).join(', ');
-      setValidationError(`Please enter an amount for: ${names}`);
-      return;
+      // Type 1: is_modifiable=true but modifiable_allergens is empty while cross_contact_risk has items
+      if (step.is_modifiable && step.cross_contact_risk.length > 0 && step.modifiable_allergens.length === 0) {
+        found.push({
+          id: `conflict-${conflictId++}`,
+          type: 'select_modifiable_allergens',
+          description: `Step ${step.step_number} ("${step.description.slice(0, 60)}...") is marked as modifiable, but no specific allergens are listed as avoidable. Select which allergens can be avoided:`,
+          options: [],
+          selectedOption: null,
+          availableAllergens: [...step.cross_contact_risk],
+          selectedAllergens: new Set(step.cross_contact_risk), // default: all selected
+          stepIndex: si,
+        });
+      }
+
+      // Type 2: Step text mentions modifications but is_modifiable is false
+      if (!step.is_modifiable && step.description.trim()) {
+        const modKeywords = /can be (changed|removed|substituted|replaced|swapped)|optional|garnish.*(remov|optional)|gluten.free (option|alternative|bread|version)|substitute available|alternative available/i;
+        if (modKeywords.test(step.description)) {
+          found.push({
+            id: `conflict-${conflictId++}`,
+            type: 'generic',
+            description: `Step ${step.step_number} mentions possible modifications ("${step.description.slice(0, 60)}...") but is not marked as modifiable. Should it be?`,
+            options: [
+              { label: 'Yes, mark this step as modifiable', action: 'mark_step_modifiable' },
+              { label: 'No, keep as-is', action: 'keep_as_is' },
+            ],
+            selectedOption: null,
+            stepIndex: si,
+          });
+        }
+      }
+
+      // Type 3: Cooking step says allergen is modifiable but ingredient with that allergen is not removable/substitutable
+      for (const allergen of step.modifiable_allergens) {
+        const allergenLower = allergen.toLowerCase();
+        for (let ii = 0; ii < form.ingredients.length; ii++) {
+          const ing = form.ingredients[ii];
+          const ingAllergens = ing.allergens.map(a => a.toLowerCase());
+          if (ingAllergens.includes(allergenLower) && !ing.isRemovable && !ing.isSubstitutable) {
+            found.push({
+              id: `conflict-${conflictId++}`,
+              type: 'generic',
+              description: `Cooking step says "${allergen}" can be avoided, but ingredient "${ing.name}" (contains ${allergen}) is not marked as removable or substitutable. How should this be handled?`,
+              options: [
+                { label: `Mark "${ing.name}" as removable`, action: 'mark_removable' },
+                { label: `Mark "${ing.name}" as substitutable`, action: 'mark_substitutable' },
+                { label: 'Keep as-is', action: 'keep_as_is' },
+              ],
+              selectedOption: null,
+              stepIndex: si,
+              ingredientIndex: ii,
+              allergen,
+            });
+          }
+        }
+      }
+
+      // Type 4: Ingredient is removable but cooking step has that allergen as non-modifiable cross-contact risk
+      for (let ii = 0; ii < form.ingredients.length; ii++) {
+        const ing = form.ingredients[ii];
+        if (!ing.isRemovable && !ing.isSubstitutable) continue;
+        for (const ingAllergen of ing.allergens) {
+          const ingAllergenLower = ingAllergen.toLowerCase();
+          const inCrossContact = step.cross_contact_risk.some(r => r.toLowerCase() === ingAllergenLower);
+          const inModifiable = step.modifiable_allergens.some(m => m.toLowerCase() === ingAllergenLower);
+          if (inCrossContact && !inModifiable && !step.is_modifiable) {
+            found.push({
+              id: `conflict-${conflictId++}`,
+              type: 'generic',
+              description: `Ingredient "${ing.name}" is marked as ${ing.isRemovable ? 'removable' : 'substitutable'}, but Step ${step.step_number} lists "${ingAllergen}" as a non-modifiable cross-contact risk. This contradicts the ingredient setting.`,
+              options: [
+                { label: `Mark Step ${step.step_number} as modifiable for "${ingAllergen}"`, action: 'mark_step_modifiable' },
+                { label: 'Keep as-is (cross-contact risk remains)', action: 'keep_as_is' },
+              ],
+              selectedOption: null,
+              stepIndex: si,
+              ingredientIndex: ii,
+              allergen: ingAllergen,
+            });
+          }
+        }
+      }
     }
 
-    setValidationError(null);
+    return found;
+  };
+
+  // Apply conflict resolutions and return the updated form
+  const applyConflictResolutions = (form: DishForm, resolvedConflicts: ConflictItem[]): DishForm => {
+    const updatedIngredients = [...form.ingredients.map(ing => ({ ...ing }))];
+    const updatedSteps = [...form.cookingSteps.map(step => ({ ...step }))];
+
+    for (const conflict of resolvedConflicts) {
+      // Handle multi-select allergen conflicts
+      if (conflict.type === 'select_modifiable_allergens') {
+        if (conflict.stepIndex !== undefined && conflict.selectedAllergens && conflict.selectedAllergens.size > 0) {
+          const step = updatedSteps[conflict.stepIndex];
+          updatedSteps[conflict.stepIndex] = {
+            ...step,
+            modifiable_allergens: [...new Set([...step.modifiable_allergens, ...conflict.selectedAllergens])],
+          };
+        }
+        continue;
+      }
+
+      if (conflict.selectedOption === null) continue;
+      const action = conflict.options[conflict.selectedOption].action;
+
+      switch (action) {
+        case 'mark_removable':
+          if (conflict.ingredientIndex !== undefined) {
+            updatedIngredients[conflict.ingredientIndex] = {
+              ...updatedIngredients[conflict.ingredientIndex],
+              isRemovable: true,
+            };
+          }
+          break;
+        case 'mark_substitutable':
+          if (conflict.ingredientIndex !== undefined) {
+            updatedIngredients[conflict.ingredientIndex] = {
+              ...updatedIngredients[conflict.ingredientIndex],
+              isSubstitutable: true,
+            };
+          }
+          break;
+        case 'mark_step_modifiable':
+          if (conflict.stepIndex !== undefined) {
+            const step = updatedSteps[conflict.stepIndex];
+            const newModifiable = conflict.allergen
+              ? [...new Set([...step.modifiable_allergens, conflict.allergen])]
+              : step.cross_contact_risk.length > 0
+                ? [...new Set([...step.modifiable_allergens, ...step.cross_contact_risk])]
+                : step.modifiable_allergens;
+            updatedSteps[conflict.stepIndex] = {
+              ...step,
+              is_modifiable: true,
+              modifiable_allergens: newModifiable,
+            };
+          }
+          break;
+        case 'keep_as_is':
+          break;
+      }
+    }
+
+    return { ...form, ingredients: updatedIngredients, cookingSteps: updatedSteps };
+  };
+
+  // Execute the actual save to Supabase
+  const executeSave = async (formToSave?: DishForm) => {
+    if (!currentDish) return;
+    const form = formToSave || currentForm;
+    if (!form) return;
+
     setSaving(true);
 
     try {
       let photoUrl = null;
 
       // Upload photo if provided
-      if (currentForm.photoFile) {
-        const fileExt = currentForm.photoFile.name.split('.').pop();
+      if (form.photoFile) {
+        const fileExt = form.photoFile.name.split('.').pop();
         const fileName = `${restaurantId}/${currentDish.id}.${fileExt}`;
 
         const { data: uploadData, error: uploadError } = await supabase.storage
           .from('dish-photos')
-          .upload(fileName, currentForm.photoFile, { upsert: true });
+          .upload(fileName, form.photoFile, { upsert: true });
 
         if (uploadError) throw uploadError;
 
@@ -1000,7 +1206,6 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       }
 
       // Check if menu item exists (for update case)
-      // First try by ID, then by name + restaurant to handle re-saves
       let existingItem = await supabase
         .from('menu_items')
         .select('id')
@@ -1008,7 +1213,6 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
         .maybeSingle()
         .then(res => res.data);
 
-      // If not found by ID, check by name + restaurant (handles case where dish was saved with new DB id)
       if (!existingItem) {
         existingItem = await supabase
           .from('menu_items')
@@ -1022,7 +1226,6 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       let menuItemId: string;
 
       if (existingItem) {
-        // Update existing menu item using the database ID
         menuItemId = existingItem.id;
 
         const { error: updateError } = await supabase
@@ -1030,22 +1233,22 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
           .update({
             name: currentDish.name,
             description: currentDish.description,
-            preparation: currentForm.preparation,
+            preparation: form.preparation,
             category: currentDish.category,
             price: currentDish.price,
-            calories: currentForm.nutrition.calories ? parseInt(currentForm.nutrition.calories, 10) : null,
-            protein_g: currentForm.nutrition.protein_g ? parseFloat(currentForm.nutrition.protein_g) : null,
-            carbs_g: currentForm.nutrition.carbs_g ? parseFloat(currentForm.nutrition.carbs_g) : null,
-            carbs_fiber_g: currentForm.nutrition.carbs_fiber_g ? parseFloat(currentForm.nutrition.carbs_fiber_g) : null,
-            carbs_sugar_g: currentForm.nutrition.carbs_sugar_g ? parseFloat(currentForm.nutrition.carbs_sugar_g) : null,
-            carbs_added_sugar_g: currentForm.nutrition.carbs_added_sugar_g ? parseFloat(currentForm.nutrition.carbs_added_sugar_g) : null,
-            fat_g: currentForm.nutrition.fat_g ? parseFloat(currentForm.nutrition.fat_g) : null,
-            fat_saturated_g: currentForm.nutrition.fat_saturated_g ? parseFloat(currentForm.nutrition.fat_saturated_g) : null,
-            fat_trans_g: currentForm.nutrition.fat_trans_g ? parseFloat(currentForm.nutrition.fat_trans_g) : null,
-            fat_polyunsaturated_g: currentForm.nutrition.fat_polyunsaturated_g ? parseFloat(currentForm.nutrition.fat_polyunsaturated_g) : null,
-            fat_monounsaturated_g: currentForm.nutrition.fat_monounsaturated_g ? parseFloat(currentForm.nutrition.fat_monounsaturated_g) : null,
-            sodium_mg: currentForm.nutrition.sodium_mg ? parseInt(currentForm.nutrition.sodium_mg, 10) : null,
-            cholesterol_mg: currentForm.nutrition.cholesterol_mg ? parseInt(currentForm.nutrition.cholesterol_mg, 10) : null,
+            calories: form.nutrition.calories ? parseInt(form.nutrition.calories, 10) : null,
+            protein_g: form.nutrition.protein_g ? parseFloat(form.nutrition.protein_g) : null,
+            carbs_g: form.nutrition.carbs_g ? parseFloat(form.nutrition.carbs_g) : null,
+            carbs_fiber_g: form.nutrition.carbs_fiber_g ? parseFloat(form.nutrition.carbs_fiber_g) : null,
+            carbs_sugar_g: form.nutrition.carbs_sugar_g ? parseFloat(form.nutrition.carbs_sugar_g) : null,
+            carbs_added_sugar_g: form.nutrition.carbs_added_sugar_g ? parseFloat(form.nutrition.carbs_added_sugar_g) : null,
+            fat_g: form.nutrition.fat_g ? parseFloat(form.nutrition.fat_g) : null,
+            fat_saturated_g: form.nutrition.fat_saturated_g ? parseFloat(form.nutrition.fat_saturated_g) : null,
+            fat_trans_g: form.nutrition.fat_trans_g ? parseFloat(form.nutrition.fat_trans_g) : null,
+            fat_polyunsaturated_g: form.nutrition.fat_polyunsaturated_g ? parseFloat(form.nutrition.fat_polyunsaturated_g) : null,
+            fat_monounsaturated_g: form.nutrition.fat_monounsaturated_g ? parseFloat(form.nutrition.fat_monounsaturated_g) : null,
+            sodium_mg: form.nutrition.sodium_mg ? parseInt(form.nutrition.sodium_mg, 10) : null,
+            cholesterol_mg: form.nutrition.cholesterol_mg ? parseInt(form.nutrition.cholesterol_mg, 10) : null,
             photo_url: photoUrl || undefined,
             updated_at: new Date().toISOString(),
           })
@@ -1053,41 +1256,38 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
 
         if (updateError) throw updateError;
 
-        // Delete existing menu_item_ingredients for this item
         await supabase
           .from('menu_item_ingredients')
           .delete()
           .eq('menu_item_id', menuItemId);
 
-        // Delete existing cooking_steps for this item
         await supabase
           .from('cooking_steps')
           .delete()
           .eq('menu_item_id', menuItemId);
       } else {
-        // Insert new menu item
         const { data: newItem, error: insertError } = await supabase
           .from('menu_items')
           .insert({
             restaurant_id: restaurantId,
             name: currentDish.name,
             description: currentDish.description,
-            preparation: currentForm.preparation,
+            preparation: form.preparation,
             category: currentDish.category,
             price: currentDish.price,
-            calories: currentForm.nutrition.calories ? parseInt(currentForm.nutrition.calories, 10) : null,
-            protein_g: currentForm.nutrition.protein_g ? parseFloat(currentForm.nutrition.protein_g) : null,
-            carbs_g: currentForm.nutrition.carbs_g ? parseFloat(currentForm.nutrition.carbs_g) : null,
-            carbs_fiber_g: currentForm.nutrition.carbs_fiber_g ? parseFloat(currentForm.nutrition.carbs_fiber_g) : null,
-            carbs_sugar_g: currentForm.nutrition.carbs_sugar_g ? parseFloat(currentForm.nutrition.carbs_sugar_g) : null,
-            carbs_added_sugar_g: currentForm.nutrition.carbs_added_sugar_g ? parseFloat(currentForm.nutrition.carbs_added_sugar_g) : null,
-            fat_g: currentForm.nutrition.fat_g ? parseFloat(currentForm.nutrition.fat_g) : null,
-            fat_saturated_g: currentForm.nutrition.fat_saturated_g ? parseFloat(currentForm.nutrition.fat_saturated_g) : null,
-            fat_trans_g: currentForm.nutrition.fat_trans_g ? parseFloat(currentForm.nutrition.fat_trans_g) : null,
-            fat_polyunsaturated_g: currentForm.nutrition.fat_polyunsaturated_g ? parseFloat(currentForm.nutrition.fat_polyunsaturated_g) : null,
-            fat_monounsaturated_g: currentForm.nutrition.fat_monounsaturated_g ? parseFloat(currentForm.nutrition.fat_monounsaturated_g) : null,
-            sodium_mg: currentForm.nutrition.sodium_mg ? parseInt(currentForm.nutrition.sodium_mg, 10) : null,
-            cholesterol_mg: currentForm.nutrition.cholesterol_mg ? parseInt(currentForm.nutrition.cholesterol_mg, 10) : null,
+            calories: form.nutrition.calories ? parseInt(form.nutrition.calories, 10) : null,
+            protein_g: form.nutrition.protein_g ? parseFloat(form.nutrition.protein_g) : null,
+            carbs_g: form.nutrition.carbs_g ? parseFloat(form.nutrition.carbs_g) : null,
+            carbs_fiber_g: form.nutrition.carbs_fiber_g ? parseFloat(form.nutrition.carbs_fiber_g) : null,
+            carbs_sugar_g: form.nutrition.carbs_sugar_g ? parseFloat(form.nutrition.carbs_sugar_g) : null,
+            carbs_added_sugar_g: form.nutrition.carbs_added_sugar_g ? parseFloat(form.nutrition.carbs_added_sugar_g) : null,
+            fat_g: form.nutrition.fat_g ? parseFloat(form.nutrition.fat_g) : null,
+            fat_saturated_g: form.nutrition.fat_saturated_g ? parseFloat(form.nutrition.fat_saturated_g) : null,
+            fat_trans_g: form.nutrition.fat_trans_g ? parseFloat(form.nutrition.fat_trans_g) : null,
+            fat_polyunsaturated_g: form.nutrition.fat_polyunsaturated_g ? parseFloat(form.nutrition.fat_polyunsaturated_g) : null,
+            fat_monounsaturated_g: form.nutrition.fat_monounsaturated_g ? parseFloat(form.nutrition.fat_monounsaturated_g) : null,
+            sodium_mg: form.nutrition.sodium_mg ? parseInt(form.nutrition.sodium_mg, 10) : null,
+            cholesterol_mg: form.nutrition.cholesterol_mg ? parseInt(form.nutrition.cholesterol_mg, 10) : null,
             photo_url: photoUrl,
             modification_policy: 'Please inform your server of any dietary restrictions.',
             is_active: true,
@@ -1100,10 +1300,9 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       }
 
       // Process ingredients
-      for (const ing of currentForm.ingredients) {
+      for (const ing of form.ingredients) {
         let ingredientId = ing.ingredientId;
 
-        // Create new ingredient if needed
         if (ing.isNew && !ingredientId) {
           const { data: newIng, error: ingError } = await supabase
             .from('ingredients')
@@ -1116,7 +1315,6 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             .single();
 
           if (ingError) {
-            // If it's a unique constraint violation, fetch the existing one
             if (ingError.code === '23505') {
               const { data: existingIng } = await supabase
                 .from('ingredients')
@@ -1130,7 +1328,6 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             }
           } else {
             ingredientId = newIng.id;
-            // Update local state with new ingredient
             setExistingIngredients(prev => [...prev, {
               id: newIng.id,
               restaurant_id: restaurantId,
@@ -1141,7 +1338,6 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
           }
         }
 
-        // Create menu_item_ingredient relationship
         if (ingredientId) {
           const { data: miiData } = await supabase.from('menu_item_ingredients').insert({
             menu_item_id: menuItemId,
@@ -1152,12 +1348,10 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
             is_substitutable: ing.isSubstitutable,
           }).select('id').single();
 
-          // Save substitutes if any
           if (miiData && ing.isSubstitutable && ing.substitutes.length > 0) {
             for (const sub of ing.substitutes) {
               let subIngredientId = sub.ingredientId;
 
-              // Create new substitute ingredient if needed
               if (sub.isNew && !subIngredientId) {
                 const { data: newSubIng, error: subIngError } = await supabase
                   .from('ingredients')
@@ -1191,7 +1385,6 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
                 }
               }
 
-              // Create substitute relationship
               if (subIngredientId) {
                 await supabase.from('ingredient_substitutes').insert({
                   menu_item_ingredient_id: miiData.id,
@@ -1204,7 +1397,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
       }
 
       // Save cooking steps
-      const cookingSteps = currentForm.cookingSteps || [];
+      const cookingSteps = form.cookingSteps || [];
       if (cookingSteps.length > 0) {
         const stepsToInsert = cookingSteps
           .filter((step) => step.description.trim())
@@ -1238,6 +1431,52 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveDish = async () => {
+    if (!currentDish || !currentForm) return;
+
+    // Validate that all ingredients have amounts
+    const ingredientsWithoutAmount = currentForm.ingredients.filter(
+      ing => ing.amountValue === null || ing.amountValue === undefined || ing.amountValue <= 0
+    );
+
+    if (ingredientsWithoutAmount.length > 0) {
+      const names = ingredientsWithoutAmount.map(ing => ing.name).join(', ');
+      setValidationError(`Please enter an amount for: ${names}`);
+      return;
+    }
+
+    setValidationError(null);
+
+    // Detect conflicts between cooking steps and ingredients
+    const detectedConflicts = detectConflicts(currentForm);
+    if (detectedConflicts.length > 0) {
+      setConflicts(detectedConflicts);
+      setShowConflictModal(true);
+      return;
+    }
+    // No conflicts — save directly
+    await executeSave();
+  };
+
+  const handleConflictResolutionSave = async () => {
+    if (!currentDish || !currentForm) return;
+
+    // Apply resolutions to get the updated form
+    const resolvedForm = applyConflictResolutions(currentForm, conflicts);
+
+    // Update the form state with resolved data
+    setDishForms((prev) => ({
+      ...prev,
+      [currentDish.id]: resolvedForm,
+    }));
+
+    setShowConflictModal(false);
+    setConflicts([]);
+
+    // Save with the resolved form data directly (avoids stale state)
+    await executeSave(resolvedForm);
   };
 
   const handleFinish = () => {
@@ -1433,6 +1672,7 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
   }
 
   return (
+    <>
     <div className="min-h-screen p-4 py-8">
       <div className="max-w-4xl mx-auto">
         <div className="bg-white rounded-2xl shadow-2xl p-8">
@@ -2435,5 +2675,132 @@ export default function DishDetailsInput({ restaurantId, dishes, onComplete }: D
         </div>
       </div>
     </div>
+
+    {/* Conflict Resolution Modal */}
+    {showConflictModal && (
+      <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-xl shadow-lg max-w-md w-full max-h-[80vh] overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+            <h3 className="text-sm font-semibold text-slate-900">Review before saving</h3>
+            <button
+              onClick={() => { setShowConflictModal(false); setConflicts([]); }}
+              className="p-1 hover:bg-slate-100 rounded transition-colors"
+            >
+              <X className="w-4 h-4 text-slate-400" />
+            </button>
+          </div>
+
+          <div className="overflow-y-auto px-5 py-4 space-y-3">
+            {conflicts.map((conflict, ci) => (
+              <div key={conflict.id} className="space-y-2.5">
+                <p className="text-xs text-slate-600 leading-relaxed">{conflict.description}</p>
+
+                {conflict.type === 'select_modifiable_allergens' && conflict.availableAllergens ? (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1.5">
+                      {conflict.availableAllergens.map((allergen) => {
+                        const isSelected = conflict.selectedAllergens?.has(allergen) ?? false;
+                        return (
+                          <button
+                            key={allergen}
+                            type="button"
+                            onClick={() => {
+                              setConflicts(prev => prev.map((c, i) => {
+                                if (i !== ci) return c;
+                                const newSet = new Set(c.selectedAllergens);
+                                if (newSet.has(allergen)) newSet.delete(allergen);
+                                else newSet.add(allergen);
+                                return { ...c, selectedAllergens: newSet };
+                              }));
+                            }}
+                            className={`px-2.5 py-1 text-xs font-medium rounded-full transition-colors ${
+                              isSelected
+                                ? 'bg-slate-900 text-white'
+                                : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                            }`}
+                          >
+                            {allergen}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConflicts(prev => prev.map((c, i) =>
+                            i === ci ? { ...c, selectedAllergens: new Set(c.availableAllergens) } : c
+                          ));
+                        }}
+                        className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConflicts(prev => prev.map((c, i) =>
+                            i === ci ? { ...c, selectedAllergens: new Set<string>() } : c
+                          ));
+                        }}
+                        className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+                      >
+                        None
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {conflict.options.map((option, oi) => (
+                      <button
+                        key={oi}
+                        type="button"
+                        onClick={() => {
+                          setConflicts(prev => prev.map((c, i) =>
+                            i === ci ? { ...c, selectedOption: oi } : c
+                          ));
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${
+                          conflict.selectedOption === oi
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-slate-50 text-slate-600 border border-transparent hover:border-slate-200'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {ci < conflicts.length - 1 && <div className="border-t border-slate-100" />}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2 px-5 py-3 border-t border-slate-200">
+            <button
+              type="button"
+              onClick={() => { setShowConflictModal(false); setConflicts([]); }}
+              className="flex-1 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConflictResolutionSave}
+              disabled={conflicts.some(c =>
+                c.type === 'select_modifiable_allergens'
+                  ? (!c.selectedAllergens || c.selectedAllergens.size === 0)
+                  : c.selectedOption === null
+              )}
+              className="flex-1 px-3 py-2 text-sm bg-slate-900 text-white rounded-lg font-medium hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
